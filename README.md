@@ -8,57 +8,72 @@ This project aims to detect pneumonia in chest X-ray images through the implemen
 
 **Technologies Used:**
 
-OpenCV
-
-TensorFlow
-
-os
+a) OpenCV
+b) TensorFlow
+c) os
 
 _**Key Features:**___
 
-**Data Preprocessing:**
+1) **Data Preprocessing:**
 
-Importing necessary libraries such as OpenCV for image processing.
-Defining allowed image extensions and removing inconsistent formats.
-Creating a dataset from image folders using tf.keras.utils.image_dataset_from_directory.
-Normalizing image data to enhance training efficiency.
+a) Importing necessary libraries such as OpenCV for image processing.
 
-**Train-Test-Validation Split:**
+b) Defining allowed image extensions and removing inconsistent formats.
 
-Dividing the dataset into training, testing, and validation sets for model evaluation.
-Monitoring model performance on the validation set to prevent overfitting.
+c) Creating a dataset from image folders using tf.keras.utils.image_dataset_from_directory.
 
-**Building the CNN Model:**
+d) Normalizing image data to enhance training efficiency.
 
-Creating a sequential model using models.Sequential().
-Implementing convolutional layers to extract image features.
-Utilizing ReLU activation for introducing non-linearity.
-Incorporating max-pooling layers to reduce image size.
-Adding fully connected layers with ReLU activation for further feature learning.
-Using a sigmoid activation in the output layer for binary classification.
+2) **Train-Test-Validation Split:**
 
-**Model Compilation and Training:**
+a) Dividing the dataset into training, testing, and validation sets for model evaluation.
 
-Compiling the model with the Adam optimizer and binary cross-entropy loss function.
-Training the model on the training data while monitoring performance on the validation set.
-Adjusting the number of epochs based on validation results.
+b) Monitoring model performance on the validation set to prevent overfitting.
 
-**Model Evaluation:**
+3) **Building the CNN Model:**
 
-Assessing model performance on unseen testing data.
-Calculating metrics such as accuracy, precision, and recall.
-Printing the final evaluation metrics.
+a) Creating a sequential model using models.Sequential().
 
-**Saving and Loading the Model:**
+b) Implementing convolutional layers to extract image features.
 
-Saving the trained model for future use.
-Demonstrating model loading and making predictions on new chest X-ray images.
+c)Utilizing ReLU activation for introducing non-linearity.
 
-**Contributions:**
+d) Incorporating max-pooling layers to reduce image size.
+
+e) Adding fully connected layers with ReLU activation for further feature learning.
+
+f) Using a sigmoid activation in the output layer for binary classification.
+
+4) **Model Compilation and Training:**
+
+a) Compiling the model with the Adam optimizer and binary cross-entropy loss function.
+
+b) Training the model on the training data while monitoring performance on the validation set.
+
+c) Adjusting the number of epochs based on validation results.
+
+5) **Model Evaluation:**
+
+a) Assessing model performance on unseen testing data.
+
+b) Calculating metrics such as accuracy, precision, and recall.
+
+c) Printing the final evaluation metrics.
+
+6) **Saving and Loading the Model:**
+
+a) Saving the trained model for future use.
+
+b) Demonstrating model loading and making predictions on new chest X-ray images.
+
+7) **Contributions:**
 
 Contributions to this project are encouraged, focusing on areas such as:
 
-Exploration of more complex architectures and hyperparameter tuning.
-Incorporation of advanced data augmentation techniques.
-Addressing potential biases in the training data.
-Documentation improvements for clarity and usability.
+a) Exploration of more complex architectures and hyperparameter tuning.
+
+b) Incorporation of advanced data augmentation techniques.
+
+c) Addressing potential biases in the training data.
+
+d) Documentation improvements for clarity and usability.
