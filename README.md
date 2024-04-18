@@ -12,7 +12,7 @@ a) OpenCV
 b) TensorFlow
 c) os
 
-_**Key Features:**___
+_**Key Features:**
 
 1) **Data Preprocessing:**
 
