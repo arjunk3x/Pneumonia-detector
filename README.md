@@ -66,7 +66,7 @@ a) Saving the trained model for future use.
 
 b) Demonstrating model loading and making predictions on new chest X-ray images.
 
-7) **Contributions:**
+**Contributions:**
 
 Contributions to this project are encouraged, focusing on areas such as:
 
