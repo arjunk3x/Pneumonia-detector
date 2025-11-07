@@ -1,5 +1,5 @@
 # ============================================================
-# SanctionApproverDashboard.py  (Option B: st.data_editor + LinkColumn)
+# SanctionApproverDashboard.py  — Option B: st.data_editor + LinkColumn
 # ============================================================
 
 import streamlit as st
@@ -153,19 +153,25 @@ def normalize_columns(df: pd.DataFrame) -> pd.DataFrame:
 df = normalize_columns(load_csv(CSV_PATH))
 
 # ----------------------------
-# Role-aware Queries (DuckDB)
+# DuckDB connection + helper
+# ----------------------------
+con = duckdb.connect()
+con.register("approval", df)
+
+def q(sql: str, params=None) -> pd.DataFrame:
+    return con.execute(sql, params or []).fetchdf()
+
+# ----------------------------
+# Role-aware Queries
 # ----------------------------
 C = stage_cols(current_role)
 in_flag, status_col, assigned_col, decided_col = C["in_flag"], C["status"], C["assigned_to"], C["decision_at"]
 next_stage = C["next_stage"]
 later = later_stages(current_role)
 
-con = duckdb.connect()
-con.register("approval", df)
-
 if current_role == "SDA":
     # SDA sees in-SDA and also brand-new submitted (not yet in-SDA)
-    pending_df = con.execute(f"""
+    pending_df = q(f"""
         SELECT * FROM approval
         WHERE
           ( {in_flag} = 1
@@ -177,37 +183,37 @@ if current_role == "SDA":
             AND COALESCE(is_in_SDA,0) = 0
             AND COALESCE(SDA_status,'Pending') = 'Pending'
           )
-    """, [current_user]).df()
+    """, [current_user])
 else:
-    pending_df = con.execute(f"""
+    pending_df = q(f"""
         SELECT * FROM approval
         WHERE {in_flag} = 1
           AND {status_col} IN ('Pending','In Progress')
           AND ({assigned_col} IS NULL OR {assigned_col} = ?)
-    """, [current_user]).df()
+    """, [current_user])
 
-approved_df = con.execute(f"""
+approved_df = q(f"""
     SELECT * FROM approval
     WHERE {status_col} = 'Approved'
       AND {decided_col} IS NOT NULL
-""").df()
+""")
 
 awaiting_condition = " OR ".join(
     [f"(COALESCE({stage_cols(s)['in_flag']},0)=1 AND COALESCE({stage_cols(s)['status']},'Pending')='Pending')"
      for s in later]
 ) or "FALSE"
-awaiting_df = con.execute(f"""
+awaiting_df = q(f"""
     SELECT * FROM approval
     WHERE {status_col}='Approved'
       AND ({awaiting_condition})
-""").df()
+""")
 
 # ----------------------------
 # KPIs
 # ----------------------------
 c1, c2, c3, c4 = st.columns(4)
 with c1: create_card("Pending Approvals", len(pending_df))
-with c2: create_card("Sanctions to Review", 0)  # optional: add if you want a separate backlog
+with c2: create_card("Sanctions to Review", 0)  # (optional separate bucket)
 with c3: create_card(f"Approved by {current_role}", len(approved_df))
 with c4: create_card("Awaiting Others", len(awaiting_df))
 
@@ -228,14 +234,14 @@ with colB:
 
 filtered = pending_df.copy()
 if search_id:
-    if search_id.isdigit():
+    if str(search_id).isdigit():
         filtered = filtered[filtered["Sanction_ID"] == int(search_id)]
     else:
         filtered = filtered[filtered["Sanction_ID"].astype(str).str.contains(search_id, case=False)]
 if status_filter:
     filtered = filtered[filtered[status_col].isin(status_filter)]
 
-# Risk label with emoji (since data_editor can't color cells)
+# Risk label with emoji (kept as text to avoid dtype conflicts)
 def risk_label_from_value(v):
     try:
         v = float(v)
@@ -248,7 +254,7 @@ def risk_label_from_value(v):
 risk_col_name = "Risk Level"
 if risk_col_name not in filtered.columns:
     if "Value" in filtered.columns:
-        filtered[risk_col_name] = filtered["Value"].apply(risk_label_from_value)
+        filtered[risk_col_name] = filtered["Value"].apply(risk_label_from_value).astype(str)
     else:
         filtered[risk_col_name] = "🟠 Medium"
 
@@ -261,16 +267,20 @@ display_df = pd.DataFrame({
     "Risk Level": filtered[risk_col_name],
 })
 
-# Add link column for navigation to Feedback page
+# Link column for navigation to Feedback page
 display_df["View"] = display_df["Sanction_ID"].apply(
     lambda sid: f"./Feedback?sanction_id={sid}"
 )
+
+# ---- IMPORTANT: force text columns to string to avoid Streamlit dtype errors
+for col in ["Sanction_ID", "Stage", "Status in Stage", "Risk Level"]:
+    display_df[col] = display_df[col].astype(str)
 
 # Render (single table)
 st.data_editor(
     display_df,
     hide_index=True,
-    disabled=True,                 # make the whole table read-only
+    disabled=True,                 # read-only table
     use_container_width=True,
     column_config={
         "View": st.column_config.LinkColumn("View", display_text="View"),
@@ -283,28 +293,35 @@ st.data_editor(
 )
 
 # ----------------------------
-# SDA Intake (optional)
+# SDA Intake (Submitted -> SDA)
 # ----------------------------
 if current_role == "SDA":
-    backlog_df = duckdb.query("""
+    backlog_df = q("""
         SELECT * FROM approval
         WHERE COALESCE(is_submitter,1)=1
           AND COALESCE(is_in_SDA,0)=0
           AND COALESCE(SDA_status,'Pending')='Pending'
-    """).to_df()
+    """)
 
     with st.expander("Intake: move submitted items into SDA"):
         st.caption("These are submitted but not yet in the SDA queue.")
         st.dataframe(backlog_df, use_container_width=True, height=220)
-        intake_ids = st.multiselect("Select Sanction_IDs to intake",
-                                    backlog_df.get("Sanction_ID", pd.Series(dtype=int)).tolist())
+        intake_ids = st.multiselect(
+            "Select Sanction_IDs to intake",
+            backlog_df.get("Sanction_ID", pd.Series(dtype=int)).tolist()
+        )
         if st.button("Move selected to SDA"):
             if intake_ids:
                 idx = df["Sanction_ID"].isin(intake_ids)
                 df.loc[idx, "is_in_SDA"] = 1
                 df.loc[idx, "SDA_status"] = "Pending"
-                df.loc[idx, "SDA_assigned_to"] = ""
+                df.loc[idx, "SDA_assigned_to"] = ""   # unassigned initially
+                # NOTE: ensure Value/risk are left as-is; risk gets recalculated for display
                 save_csv(df, CSV_PATH)
+
+                # re-register updated DF to the same DuckDB connection, then rerun
+                con.unregister("approval")
+                con.register("approval", df)
                 st.success("Moved to SDA queue.")
                 st.rerun()
             else:
