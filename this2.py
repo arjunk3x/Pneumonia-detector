@@ -335,25 +335,386 @@ for _, r in display_df.iterrows():
 
 import streamlit as st
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# app_pages/Feedback_Page.py
+
+import os
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+import streamlit as st
+
+
+# =========================
+# Config: CSV file paths
+# =========================
+# 1) "Display" data for the feedback page (one row per sanction with pretty fields)
+#    Expected columns (string unless noted):
+#    Sanction_ID, Project_Name, Directorate, Current_Stage, Linked_Resanction,
+#    Amount, Submitted_By, Status, Attach_1, Attach_2, (add more attach cols if you like)
+SANCTIONS_CSV = Path("feedback.csv")
+
+# 2) "Workflow" tracker used across pages (the mock DB you’ve used so far)
+#    Must include these columns at minimum:
+#    Sanction_ID, Overall_status,
+#    is_in_SDA, SDA_status, SDA_assigned_to, SDA_decision_at,
+#    is_in_data_guild, data_guild_status, data_guild_assigned_to, data_guild_decision_at,
+#    is_in_digital_guild, digital_guild_status, digital_guild_assigned_to, digital_guild_decision_at,
+#    is_in_etidm, etidm_status, etidm_assigned_to, etidm_decision_at
+WORKFLOW_CSV = Path("approval_tracker_dummy.csv")
+
+
+# =========================
+# Auth helpers
+# =========================
 def ensure_auth_keys():
     st.session_state.setdefault("logged_in", False)
     st.session_state.setdefault("username", None)
-    st.session_state.setdefault("role", None)
+    st.session_state.setdefault("role", None)  # "SDA", "DataGuild", "DigitalGuild", "ETIDM"
 
-ensure_auth_keys()
-if not st.session_state.logged_in:
-    st.switch_page("Home.py")
-    st.stop()
 
-# Get sanction id – prefer session (from switch_page), then URL query as fallback
+def guard_login():
+    ensure_auth_keys()
+    if not st.session_state.logged_in:
+        # send back to your login / home page
+        st.switch_page("Home.py")
+        st.stop()
+
+
+# =========================
+# Data helpers
+# =========================
+def _safe_read_csv(path: Path) -> pd.DataFrame:
+    if not path.exists():
+        return pd.DataFrame()
+    try:
+        return pd.read_csv(path)
+    except Exception:
+        return pd.DataFrame()
+
+
+def load_workflow() -> pd.DataFrame:
+    return _safe_read_csv(WORKFLOW_CSV)
+
+
+def save_workflow(df: pd.DataFrame) -> None:
+    df.to_csv(WORKFLOW_CSV, index=False)
+
+
+def load_sanction_display(sid: str) -> pd.Series:
+    """
+    Return a single row (Series) with the display fields for this sanction from SANCTIONS_CSV.
+    If not found, return a graceful placeholder row so the page still renders.
+    """
+    df = _safe_read_csv(SANCTIONS_CSV)
+    if not df.empty and "Sanction_ID" in df.columns:
+        row = df.loc[df["Sanction_ID"].astype(str) == str(sid)]
+        if len(row):
+            return row.iloc[0]
+
+    # Fallback placeholder
+    return pd.Series(
+        {
+            "Sanction_ID": sid,
+            "Project_Name": "—",
+            "Directorate": "—",
+            "Current_Stage": "—",
+            "Linked_Resanction": "—",
+            "Amount": "—",
+            "Submitted_By": "—",
+            "Status": "Yet to Approve",
+            "Attach_1": "https://example.com/Project_Proposal.pdf",
+            "Attach_2": "https://example.com/Financial_Forecast.xlsx",
+        }
+    )
+
+
+def approve_current(sid: str, role: str, actor: str):
+    """
+    Stage transitions:
+      SDA -> DataGuild
+      DataGuild -> DigitalGuild
+      DigitalGuild -> ETIDM
+      ETIDM -> Completed
+    """
+    df = load_workflow()
+    if df.empty or "Sanction_ID" not in df.columns:
+        st.error("Workflow CSV is missing or invalid; cannot approve.")
+        return
+
+    mask = df["Sanction_ID"].astype(str) == str(sid)
+    if not mask.any():
+        st.error(f"Sanction {sid} not found in workflow CSV.")
+        return
+
+    now = datetime.now().isoformat(timespec="seconds")
+
+    role = (role or "").strip()
+    if role == "SDA":
+        df.loc[mask, "SDA_status"] = "Completed"
+        df.loc[mask, "SDA_decision_at"] = now
+        df.loc[mask, "is_in_SDA"] = 0
+
+        df.loc[mask, "is_in_data_guild"] = 1
+        df.loc[mask, "data_guild_status"] = "Pending"
+        df.loc[mask, "data_guild_assigned_to"] = None
+
+    elif role == "DataGuild":
+        df.loc[mask, "data_guild_status"] = "Completed"
+        df.loc[mask, "data_guild_decision_at"] = now
+        df.loc[mask, "is_in_data_guild"] = 0
+
+        df.loc[mask, "is_in_digital_guild"] = 1
+        df.loc[mask, "digital_guild_status"] = "Pending"
+        df.loc[mask, "digital_guild_assigned_to"] = None
+
+    elif role == "DigitalGuild":
+        df.loc[mask, "digital_guild_status"] = "Completed"
+        df.loc[mask, "digital_guild_decision_at"] = now
+        df.loc[mask, "is_in_digital_guild"] = 0
+
+        df.loc[mask, "is_in_etidm"] = 1
+        df.loc[mask, "etidm_status"] = "Pending"
+        df.loc[mask, "etidm_assigned_to"] = None
+
+    elif role == "ETIDM":
+        df.loc[mask, "etidm_status"] = "Completed"
+        df.loc[mask, "etidm_decision_at"] = now
+        df.loc[mask, "is_in_etidm"] = 0
+        df.loc[mask, "Overall_status"] = "Completed"
+
+    else:
+        st.error(f"Unknown role '{role}'.")
+        return
+
+    save_workflow(df)
+    st.success(f"{role} approval recorded for Sanction {sid}.")
+
+
+def reject_current(sid: str, role: str, actor: str, reason: str):
+    """
+    Simple reject: mark this stage as Rejected and stop the flow (Overall_status = Rejected).
+    You can tailor this to send it back to a previous stage if desired.
+    """
+    df = load_workflow()
+    if df.empty or "Sanction_ID" not in df.columns:
+        st.error("Workflow CSV is missing or invalid; cannot reject.")
+        return
+
+    mask = df["Sanction_ID"].astype(str) == str(sid)
+    if not mask.any():
+        st.error(f"Sanction {sid} not found in workflow CSV.")
+        return
+
+    now = datetime.now().isoformat(timespec="seconds")
+
+    role = (role or "").strip()
+    if role == "SDA":
+        df.loc[mask, "SDA_status"] = "Rejected"
+        df.loc[mask, "SDA_decision_at"] = now
+        df.loc[mask, "is_in_SDA"] = 0
+    elif role == "DataGuild":
+        df.loc[mask, "data_guild_status"] = "Rejected"
+        df.loc[mask, "data_guild_decision_at"] = now
+        df.loc[mask, "is_in_data_guild"] = 0
+    elif role == "DigitalGuild":
+        df.loc[mask, "digital_guild_status"] = "Rejected"
+        df.loc[mask, "digital_guild_decision_at"] = now
+        df.loc[mask, "is_in_digital_guild"] = 0
+    elif role == "ETIDM":
+        df.loc[mask, "etidm_status"] = "Rejected"
+        df.loc[mask, "etidm_decision_at"] = now
+        df.loc[mask, "is_in_etidm"] = 0
+    else:
+        st.error(f"Unknown role '{role}'.")
+        return
+
+    df.loc[mask, "Overall_status"] = "Rejected"
+    # Optional: record reason column if you have one
+    if "reject_reason" in df.columns:
+        df.loc[mask, "reject_reason"] = reason
+
+    save_workflow(df)
+    st.warning(f"{role} rejected Sanction {sid}.")
+
+
+# =========================
+# UI helpers
+# =========================
+def badge(text: str, bg: str, fg: str = "#1F2937"):
+    return f"""
+    <span style="
+        background-color:{bg};
+        color:{fg};
+        padding:6px 10px;
+        border-radius:12px;
+        font-weight:600;
+        font-size:13px;">
+        {text}
+    </span>
+    """
+
+
+def header_block(row: pd.Series):
+    # Status badge
+    status = str(row.get("Status", "Yet to Approve"))
+    status_badge = badge(status, "#FFF3CD", "#92400E")  # yellow-ish
+
+    st.markdown(
+        f"""
+        <div style="display:flex; gap:20px; align-items:center; margin-bottom:10px;">
+            <div style="color:#6B7280; font-size:14px;">Sanction ID</div>
+            <div style="color:#1F2937; font-size:18px; font-weight:600;">{row.get('Sanction_ID','—')}</div>
+
+            <div style="color:#6B7280; font-size:14px; margin-left:40px;">Project Name</div>
+            <div style="color:#1F2937; font-size:18px; font-weight:600;">{row.get('Project_Name','—')}</div>
+
+            <div style="margin-left:auto;">{status_badge}</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def overview_card(row: pd.Series):
+    a1 = row.get("Attach_1", "")
+    a2 = row.get("Attach_2", "")
+
+    st.markdown(
+        f"""
+        <div style="border:1px solid #E5E7EB; border-radius:12px; background-color:#FFFFFF; padding:20px; margin-top:10px; margin-bottom:10px; font-family: 'Segoe UI', sans-serif; box-shadow: 0 2px 8px rgba(0,0,0,0.03);">
+            <h3 style="margin:0 0 16px 0; font-weight:bold; color:#1F2937; font-size:22px;">Sanction Overview</h3>
+
+            <div style="display:flex; gap:80px; align-items:flex-start;">
+                <div>
+                    <div style="color:#6B7280; font-size:14px;">Sanction ID</div>
+                    <div style="color:#1F2937; font-size:18px; font-weight:600;">{row.get('Sanction_ID','—')}</div>
+
+                    <div style="height:14px;"></div>
+                    <div style="color:#6B7280; font-size:14px;">Directorate</div>
+                    <div style="color:#1F2937; font-size:18px; font-weight:600;">{row.get('Directorate','—')}</div>
+
+                    <div style="height:14px;"></div>
+                    <div style="color:#6B7280; font-size:14px;">Current Stage</div>
+                    <div style="color:#1F2937; font-size:18px; font-weight:600;">{row.get('Current_Stage','—')}</div>
+
+                    <div style="height:14px;"></div>
+                    <div style="color:#6B7280; font-size:14px;">Linked Resanction</div>
+                    <div style="color:#1F2937; font-size:18px; font-weight:600;">{row.get('Linked_Resanction','—')}</div>
+                </div>
+
+                <div>
+                    <div style="color:#6B7280; font-size:14px;">Project Name</div>
+                    <div style="color:#1F2937; font-size:18px; font-weight:600;">{row.get('Project_Name','—')}</div>
+
+                    <div style="height:14px;"></div>
+                    <div style="color:#6B7280; font-size:14px;">Amount</div>
+                    <div style="color:#1F2937; font-size:18px; font-weight:600;">{row.get('Amount','—')}</div>
+
+                    <div style="height:14px;"></div>
+                    <div style="color:#6B7280; font-size:14px;">Submitted By</div>
+                    <div style="color:#1F2937; font-size:18px; font-weight:600;">{row.get('Submitted_By','—')}</div>
+                </div>
+            </div>
+
+            <div style="margin-top:20px;">
+                <div style="color:#6B7280; font-size:14px; margin-bottom:10px; font-weight:600;">Attachments</div>
+                <div style="display:flex; flex-direction:column; gap:8px;">
+                    {"<a href='"+str(a1)+"' target='_blank' style='color:#2563EB; text-decoration:none; font-weight:600;'>📄 Project Proposal</a>" if a1 else ""}
+                    {"<a href='"+str(a2)+"' target='_blank' style='color:#2563EB; text-decoration:none; font-weight:600;'>📊 Financial Forecast</a>" if a2 else ""}
+                </div>
+            </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+# =========================
+# Page entry
+# =========================
+guard_login()
+st.set_page_config(page_title="Sanction Management", layout="wide")
+
+# find the selected sanction id (prefer session key from dashboard)
 sid = st.session_state.get("open_sanction_id")
 if not sid:
-    # Optional fallback if someone navigates via a raw URL with ?sanction_id=...
+    # optional fallback to query params
     qp = st.query_params
     sid = qp.get("sanction_id", [None])[0] if isinstance(qp.get("sanction_id"), list) else qp.get("sanction_id")
-    st.session_state["open_sanction_id"] = sid
 
 if not sid:
     st.warning("No sanction selected.")
     st.stop()
+
+# header
+st.markdown('<div class="header-title" style="font-size:40px; font-weight:700; margin-bottom:10px;">Sanction Management</div>', unsafe_allow_html=True)
+
+# show a small breadcrumb / back button row
+c1, c2 = st.columns([1, 6])
+with c1:
+    if st.button("← Back to Dashboard"):
+        st.switch_page("app_pages/SanctionApproverDashboard.py")
+
+# load the pretty details for the page
+row = load_sanction_display(sid)
+
+# top compact header area
+header_block(row)
+
+# main details card
+overview_card(row)
+
+st.divider()
+
+# =========================
+# Action buttons (Approve / Reject)
+# =========================
+current_role = st.session_state.role or "SDA"
+current_user = st.session_state.username or "unknown@company.com"
+
+ac1, ac2, _ = st.columns([1, 1, 4])
+with ac1:
+    if st.button("✅ Approve"):
+        approve_current(sid, current_role, current_user)
+with ac2:
+    with st.popover("📝 Reject / Add Note"):
+        reason = st.text_area("Reason", placeholder="Why are you rejecting?")
+        if st.button("Reject now"):
+            reject_current(sid, current_role, current_user, reason.strip())
+            st.rerun()
+
+# keep the selected id in session so a manual refresh doesn’t lose context
+st.session_state["open_sanction_id"] = sid
+
 
