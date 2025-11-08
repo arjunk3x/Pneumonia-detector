@@ -718,3 +718,31 @@ with ac2:
 st.session_state["open_sanction_id"] = sid
 
 
+
+
+
+
+# ---- build table with a button column ----
+event = st.data_editor(
+    display_df.assign(View="View"),
+    hide_index=True,
+    use_container_width=True,
+    column_config={
+        "View": st.column_config.ButtonColumn("View"),
+        "Sanction_ID": st.column_config.TextColumn("Sanction_ID"),
+        "Stage": st.column_config.TextColumn("Stage"),
+        "Status in Stage": st.column_config.TextColumn("Status in Stage"),
+        "Value": st.column_config.NumberColumn("Value"),
+        "Risk Level": st.column_config.TextColumn("Risk Level"),
+    },
+    key="sanctions_tbl",
+)
+
+# ---- handle click ----
+clicked_rows = event["edited_rows"]  # rows where a button was pressed this run
+if clicked_rows:
+    row_idx = list(clicked_rows.keys())[0]
+    sid = event["data"][row_idx]["Sanction_ID"]
+    st.session_state["selected_sanction_id"] = str(sid)
+    st.switch_page("app_pages/Feedback_Page.py")
+
