@@ -281,3 +281,79 @@ with col3:
         st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import streamlit as st
+
+def ensure_auth_keys():
+    st.session_state.setdefault("logged_in", False)
+    st.session_state.setdefault("username", None)
+    st.session_state.setdefault("role", None)
+
+ensure_auth_keys()
+if not st.session_state.logged_in:
+    st.switch_page("Home.py")  # your login page
+    st.stop()
+
+def go_to_feedback(sid: str):
+    st.session_state["open_sanction_id"] = str(sid)
+    st.switch_page("app_pages/Feedback_Page.py")
+
+st.write("### Pending Sanctions")
+st.dataframe(display_df[["Sanction_ID","Value","Stage","Status in Stage","Risk Level"]], 
+             use_container_width=True)
+
+st.write("#### Actions")
+for _, r in display_df.iterrows():
+    cols = st.columns([2,2,2,2,1])
+    cols[0].write(f"**{r['Sanction_ID']}**")
+    cols[1].write(f"{r['Value']}")
+    cols[2].write(r["Stage"])
+    cols[3].write(r["Status in Stage"])
+    if cols[4].button("View", key=f"view_{r['Sanction_ID']}"):
+        go_to_feedback(r["Sanction_ID"])
+
+import streamlit as st
+
+def ensure_auth_keys():
+    st.session_state.setdefault("logged_in", False)
+    st.session_state.setdefault("username", None)
+    st.session_state.setdefault("role", None)
+
+ensure_auth_keys()
+if not st.session_state.logged_in:
+    st.switch_page("Home.py")
+    st.stop()
+
+# Get sanction id – prefer session (from switch_page), then URL query as fallback
+sid = st.session_state.get("open_sanction_id")
+if not sid:
+    # Optional fallback if someone navigates via a raw URL with ?sanction_id=...
+    qp = st.query_params
+    sid = qp.get("sanction_id", [None])[0] if isinstance(qp.get("sanction_id"), list) else qp.get("sanction_id")
+    st.session_state["open_sanction_id"] = sid
+
+if not sid:
+    st.warning("No sanction selected.")
+    st.stop()
+
