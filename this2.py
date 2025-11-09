@@ -1,8 +1,6 @@
 # app_pages/SanctionApproverDashboard.py
-# Streamlit dashboard for role-scoped sanction approvals with polished styling.
-# Uses APPROVER_TRACKER_PATH (default: "approver_tracker.csv") for data.
+# Complete Streamlit page reconstructed & merged from all screenshots.
 
-import os
 import streamlit as st
 import pandas as pd
 import duckdb
@@ -11,121 +9,31 @@ from pathlib import Path
 # ==============================
 # Config
 # ==============================
-st.set_page_config(page_title="Sanction Approver Dashboard", layout="wide", initial_sidebar_state="expanded")
+st.set_page_config(page_title="Sanction Approver Dashboard", layout="wide")
 
-# Global CSS to match Feedback page look & feel
-st.markdown("""
-<style>
-:root{
-  --bg:#f7f8fb;
-  --card:#ffffff;
-  --muted:#6b7280;
-  --ink:#111827;
-  --primary:#4f46e5;
-  --primary-weak:#eef2ff;
-  --ok:#10b981;
-  --ok-weak:#ecfdf5;
-  --warn:#f59e0b;
-  --warn-weak:#fff7ed;
-  --danger:#ef4444;
-  --danger-weak:#fef2f2;
-  --ring:#e5e7eb;
-  --shadow:0 10px 25px rgba(0,0,0,.07);
-  --shadow-sm:0 2px 8px rgba(0,0,0,.06);
-  --radius:16px;
-  --radius-sm:12px;
-}
-
-html, body { background: var(--bg); }
-.block-container { padding-top: 1.0rem; }
-
-.card{
-  border:1px solid var(--ring);
-  background: var(--card);
-  border-radius: var(--radius);
-  padding:16px 18px;
-  box-shadow: var(--shadow-sm);
-}
-
-.header{
-  display:flex; align-items:center; justify-content:space-between;
-  margin-bottom: 8px;
-}
-
-.kpi{
-  position:relative; overflow:hidden;
-  background:linear-gradient(180deg,#fff, #fafafa);
-  border:1px solid var(--ring); border-radius: var(--radius);
-  padding:16px; box-shadow: var(--shadow-sm);
-  text-align:center;
-}
-.kpi .label{ font-size:13px; color:var(--muted); }
-.kpi .value{ font-size:26px; font-weight:800; color:var(--ink); }
-
-.grid{ display:grid; gap:16px; grid-template-columns: repeat(12, minmax(0,1fr)); }
-.col-3{grid-column: span 3 / span 3;} .col-4{grid-column: span 4 / span 4;} .col-6{grid-column: span 6 / span 6;} .col-12{grid-column: span 12 / span 12;}
-@media (max-width:1100px){ .col-3, .col-4, .col-6 { grid-column: span 12 / span 12; } }
-
-.table-card .stDataFrame{ border-radius:12px; overflow:hidden; box-shadow: var(--shadow-sm); }
-
-.badge{
-  display:inline-flex; align-items:center; gap:6px;
-  font-size:12px; font-weight:700;
-  padding:4px 10px; border-radius:999px;
-  border:1px solid var(--ring); background:#fff; color:#111827;
-}
-.badge.primary{ background:var(--primary-weak); color:#312e81; border-color:#c7d2fe; }
-
-.stButton>button{
-  border-radius:12px; padding:10px 16px; font-weight:800;
-  border:1px solid var(--ring); background:#fff; color:#111827;
-  transition:.16s ease; box-shadow: var(--shadow-sm);
-}
-.stButton>button:hover{ transform:translateY(-1px); box-shadow: var(--shadow); }
-.btn-primary>button{ background: var(--primary) !important; color:#fff !important; border-color: transparent !important; }
-.btn-warn>button{ background: var(--warn) !important; color:#111827 !important; border-color: transparent !important; }
-.btn-danger>button{ background: var(--danger) !important; color:#fff !important; border-color: transparent !important; }
-</style>
-""", unsafe_allow_html=True)
-
-# ==============================
-# Paths / Data sources
-# ==============================
-# Override with env var if you want: set APPROVER_TRACKER_PATH="C:\\full\\path\\approver_tracker.csv"
-TRACKER_PATH = Path(os.getenv("APPROVER_TRACKER_PATH", "approver_tracker.csv"))
+# Path to your tracker file (can be overridden by st.session_state["tracker_csv_path"])
+CSV_PATH = Path(st.session_state.get("tracker_csv_path", r"C:\Users\Arjun.Krishna\Downloads\approval_tracker_dummy.csv"))
 
 # ==============================
 # Session / Current user & role
 # ==============================
 current_user = st.session_state.get("user_email", "sda@company.com")
-# Allowed roles: "SDA", "DataGuild", "DigitalGuild", "ETIDM"
-current_role = st.session_state.get("user_role", "SDA")
-
-# ---- Fast navigate: if a View button was clicked, jump immediately to Feedback page
-if "navigate_to_feedback" not in st.session_state:
-    st.session_state.navigate_to_feedback = False
-if st.session_state.navigate_to_feedback:
-    st.session_state.navigate_to_feedback = False
-    try:
-        st.switch_page("app_pages/Feedback_Page.py")  # Streamlit multipage routing
-    except Exception:
-        pass
+current_role = st.session_state.get("user_role", "SDA")  # "SDA" | "DataGuild" | "DigitalGuild" | "ETIDM"
 
 # ==============================
 # Load data + ensure columns
 # ==============================
-if not TRACKER_PATH.exists():
-    st.error(f"Tracker CSV not found at {TRACKER_PATH.resolve()}")
+if not CSV_PATH.exists():
+    st.error(f"CSV not found at {CSV_PATH.resolve()}")
     st.stop()
 
-df = pd.read_csv(TRACKER_PATH)
+df = pd.read_csv(CSV_PATH)
 
 # Ensure expected columns exist (fill missing)
 for col, default in [
     ("Sanction_ID", ""),
     ("Value", 0.0),
     ("overall_status", "submitted"),
-    ("Current Stage", ""),
     ("is_submitter", 0),
     ("is_in_SDA", 0), ("SDA_status", "Pending"), ("SDA_assigned_to", None), ("SDA_decision_at", None),
     ("is_in_data_guild", 0), ("data_guild_status", "Pending"), ("data_guild_assigned_to", None), ("data_guild_decision_at", None),
@@ -143,7 +51,14 @@ con.register("approval", df)
 # Flow / Stage helpers
 # ==============================
 ROLE_FLOW = ["SDA", "DataGuild", "DigitalGuild", "ETIDM"]
-LABELS = {"SDA":"SDA", "DataGuild":"Data Guild", "DigitalGuild":"Digital Guild", "ETIDM":"ETIDM"}
+
+def role_display_name(role: str) -> str:
+    return {
+        "SDA": "SDA",
+        "DataGuild": "Data Guild",
+        "DigitalGuild": "Digital Guild",
+        "ETIDM": "ETIDM",
+    }.get(role, role)
 
 STAGE_MAP = {
     "SDA": {
@@ -194,211 +109,166 @@ def flag_true_sql(col_name: str) -> str:
     END
     """
 
-# ---- Strict scope filters
-def pending_scope_for(role: str) -> str:
-    """Only items that are loaded into this stage (current flag true) AND Current Stage matches role."""
-    is_in_col, status_col, _, _ = stage_cols(role)
-    return (
-        f"{flag_true_sql(is_in_col)} = TRUE "
-        f"AND COALESCE(CAST({status_col} AS VARCHAR), 'Pending') IN ('Pending','In Progress') "
-        f'AND COALESCE(CAST("Current Stage" AS VARCHAR), \'\') = \'{role}\''
-    )
-
-def intake_scope_for(role: str) -> str:
-    """Only items APPROVED by previous stage, decided, and NOT yet loaded into this stage."""
-    if role == "SDA":
-        # Raw submissions only for SDA
-        return f"TRY_CAST(is_submitter AS BIGINT) = 1 AND {flag_true_sql('is_in_SDA')} = FALSE"
-    p = prev_role(role)
-    p_is_in, p_status, _, p_decision_at = stage_cols(p)
+# ---- Visibility filter (who sees what)
+# SDA: items currently in SDA
+# Other roles: items where previous stage is Approved (and decided),
+# and where current stage flag is false/pending.
+def visibility_filter_for(role: str) -> str:
     cur_is_in, cur_status, _, _ = stage_cols(role)
-    return (
-        f"CAST({p_status} AS VARCHAR) = 'Approved' "
-        f"AND TRY_CAST({p_decision_at} AS TIMESTAMP) IS NOT NULL "
-        f"AND {flag_true_sql(cur_is_in)} = FALSE "
-        f"AND COALESCE(CAST({cur_status} AS VARCHAR),'') IN ('','Pending') "
-        f'AND COALESCE(CAST("Current Stage" AS VARCHAR), \'\') = \'{role}\''
-    )
+    p = prev_role(role)
 
-def approved_scope_for(role: str) -> str:
-    """History: items this role has approved (decision time present)."""
-    _, status_col, _, decision_col = stage_cols(role)
-    return (
-        f"CAST({status_col} AS VARCHAR) = 'Approved' "
-        f"AND TRY_CAST({decision_col} AS TIMESTAMP) IS NOT NULL"
-    )
+    if role == "SDA":
+        # SDA sees what is in SDA and pending
+        return f"""
+            {flag_true_sql(cur_is_in)} = TRUE
+            AND COALESCE(CAST({cur_status} AS VARCHAR),'') IN ('','Pending')
+        """
+    else:
+        # Others see items that were approved by previous stage and not yet decided in current
+        if not p:
+            return "FALSE"
+        p_is_in, p_status, _, p_decision_at = stage_cols(p)
+        return f"""
+            CAST({p_status} AS VARCHAR) = 'Approved'
+            AND TRY_CAST({p_decision_at} AS TIMESTAMP) IS NOT NULL
+            AND {flag_true_sql(cur_is_in)} = TRUE
+            AND COALESCE(CAST({cur_status} AS VARCHAR),'') IN ('','Pending')
+        """
 
-# ---- Helper to set stage flags properly (for Intake / routing)
-def set_stage_flags_inplace(df: pd.DataFrame, ids: list[str], stage: str):
-    flags = {
-        "SDA": "is_in_SDA",
-        "DataGuild": "is_in_data_guild",
-        "DigitalGuild": "is_in_digital_guild",
-        "ETIDM": "is_in_etidm",
-    }
-    statuses = {
-        "SDA": "SDA_status",
-        "DataGuild": "data_guild_status",
-        "DigitalGuild": "digital_guild_status",
-        "ETIDM": "etidm_status",
-    }
-    assignees = {
-        "SDA": "SDA_assigned_to",
-        "DataGuild": "data_guild_assigned_to",
-        "DigitalGuild": "digital_guild_assigned_to",
-        "ETIDM": "etidm_assigned_to",
-    }
-
-    mask = df["Sanction_ID"].astype(str).isin([str(x) for x in ids])
-
-    # turn OFF all stage flags first (mutually exclusive)
-    for f in ["is_in_SDA", "is_in_data_guild", "is_in_digital_guild", "is_in_etidm"]:
-        if f in df.columns:
-            df.loc[mask, f] = 0
-
-    # turn ON current stage flag & reset status/assignee, set Current Stage to this stage
-    df.loc[mask, flags[stage]] = 1
-    df.loc[mask, statuses[stage]] = "Pending"
-    df.loc[mask, assignees[stage]] = None
-    df.loc[mask, "Current Stage"] = stage
-
-    # items are no longer raw submissions after entering SDA
-    if stage == "SDA" and "is_submitter" in df.columns:
-        df.loc[mask, "is_submitter"] = 0
+# ==============================
+# Sidebar role switcher (persist to session)
+# ==============================
+try:
+    _idx = ROLE_FLOW.index(st.session_state.get("user_role", "SDA"))
+except ValueError:
+    _idx = 0
+picked_role = st.sidebar.selectbox("Team", ROLE_FLOW, index=_idx)
+st.session_state["user_role"] = picked_role
+current_role = picked_role
 
 # ==============================
 # Header
 # ==============================
-st.markdown(
-    '<div class="card header"><h1 style="margin:0">Sanction Approver Dashboard</h1>'
-    f'<span class="badge primary">Role: {LABELS[current_role]}</span></div>',
-    unsafe_allow_html=True
-)
+st.title("Sanction Approver Dashboard")
+st.caption("Filter, review and act on sanctions by stage.")
 
 # ==============================
-# KPI Cards
+# Pending list for current role
 # ==============================
-def kpi_card(title, value):
-    st.markdown(
-        f'<div class="kpi"><div class="value">{value}</div><div class="label">{title}</div></div>',
-        unsafe_allow_html=True,
-    )
-
-# Role-scoped datasets
-is_in_col, status_col, assigned_col, decision_col = stage_cols(current_role)
-
-pending_df = con.execute(
-    f"""
+cur_is_in, status_col, _, _ = stage_cols(current_role)
+pending_df = con.execute(f"""
     SELECT *
     FROM approval
-    WHERE {pending_scope_for(current_role)}
-    """
-).df()
+    WHERE {visibility_filter_for(current_role)}
+""").df()
 
-approved_df = con.execute(
-    f"""
-    SELECT *
-    FROM approval
-    WHERE {approved_scope_for(current_role)}
-    """
-).df()
+# Basic stat stripe
+c1, c2, c3 = st.columns([1,1,1])
+with c1:
+    st.metric("Pending", len(pending_df))
+with c2:
+    st.metric("Team", role_display_name(current_role))
+with c3:
+    st.metric("CSV rows", len(df))
 
-nr = next_role(current_role)
-if nr:
-    awaiting_df = con.execute(
-        f"""
-        SELECT *
-        FROM approval
-        WHERE {approved_scope_for(current_role)}
-          AND COALESCE(CAST("Current Stage" AS VARCHAR), '') = '{nr}'
-          AND {flag_true_sql(STAGE_MAP[nr]["is_in"])} = FALSE
-        """
-    ).df()
-else:
-    awaiting_df = pending_df.iloc[0:0].copy()
-
-# KPI grid
-st.markdown('<div class="grid">', unsafe_allow_html=True)
-st.markdown('<div class="col-3">', unsafe_allow_html=True); kpi_card("Pending", len(pending_df)); st.markdown('</div>', unsafe_allow_html=True)
-st.markdown('<div class="col-3">', unsafe_allow_html=True); kpi_card("Approved (this stage)", len(approved_df)); st.markdown('</div>', unsafe_allow_html=True)
-st.markdown('<div class="col-3">', unsafe_allow_html=True); kpi_card("Awaiting Next Stage", len(awaiting_df)); st.markdown('</div>', unsafe_allow_html=True)
-st.markdown('<div class="col-3">', unsafe_allow_html=True); kpi_card("Total Items", len(df)); st.markdown('</div>', unsafe_allow_html=True)
-st.markdown('</div>', unsafe_allow_html=True)
-
-st.divider()
-
+# Table + View
 # ==============================
-# Pending table + View
-# ==============================
-st.markdown(f"### Pending in **{LABELS[current_role]}**")
+st.markdown(f"### Pending in **{role_display_name(current_role)}**")
 
 if not pending_df.empty:
-    with st.container():
-        for _, row in pending_df.iterrows():
-            c1, c2 = st.columns([6, 1])
-            with c1:
-                st.markdown(
-                    '<div class="card" style="margin-bottom:8px">'
-                    f"<b>{row['Sanction_ID']}</b> • Value: {row.get('Value', '')} • "
-                    f"Status: {row[status_col]} • Stage: {LABELS[current_role]}"
-                    "</div>",
-                    unsafe_allow_html=True,
-                )
-            with c2:
-                with st.container():
-                    st.markdown('<div class="btn-primary">', unsafe_allow_html=True)
-                    if st.button("View ↗", key=f"view_{row['Sanction_ID']}", use_container_width=True):
-                        st.session_state["selected_sanction_id"] = str(row["Sanction_ID"])
-                        st.session_state.navigate_to_feedback = True
-                        st.rerun()
-                    st.markdown('</div>', unsafe_allow_html=True)
+    # simple list rows with view buttons (keeps session)
+    for _, row in pending_df.iterrows():
+        c1, c2 = st.columns([6, 1])
+        with c1:
+            st.write(
+                f"**{row['Sanction_ID']}** | Value: {row.get('Value', '')} | "
+                f"Status: {row[status_col]} | Stage: {role_display_name(current_role)}"
+            )
+        with c2:
+            if st.button("View ↗", key=f"view_{row['Sanction_ID']}"):
+                st.session_state["selected_sanction_id"] = str(row["Sanction_ID"])
+                # Fast navigate to Feedback page
+                try:
+                    st.switch_page("app_pages/Feedback_Page.py")
+                except Exception:
+                    # For older Streamlit versions, set a flag and rerun
+                    st.session_state["navigate_to_feedback"] = True
+                st.rerun()
 else:
-    st.info(f"No pending sanctions for **{LABELS[current_role]}**.")
+    st.info(f"No pending sanctions for **{role_display_name(current_role)}**.")
 
 # ==============================
-# Intake (STRICT)
+# Intake (STRICT: only approved-from-previous-stage, or raw submissions for SDA)
 # ==============================
-with st.expander(f"Intake ({LABELS[current_role]})", expanded=False):
-    backlog_df = con.execute(f"SELECT * FROM approval WHERE {intake_scope_for(current_role)}").df()
+with st.expander(f"Intake ({role_display_name(current_role)})", expanded=False):
+    if current_role == "SDA":
+        # Only raw submissions not yet pulled into SDA
+        backlog_df = con.execute(f"""
+            SELECT *
+            FROM approval
+            WHERE TRY_CAST(is_submitter AS BIGINT) = 1
+              AND {flag_true_sql('is_in_SDA')} = FALSE
+        """).df()
+    else:
+        # Only those APPROVED by the previous stage, and not yet moved into current stage
+        p = prev_role(current_role)
+        p_is_in, p_status, _, p_decision_at = stage_cols(p)
+        cur_is_in, cur_status, _, _ = stage_cols(current_role)
+
+        backlog_df = con.execute(f"""
+            SELECT *
+            FROM approval
+            WHERE CAST({p_status} AS VARCHAR) = 'Approved'
+              AND TRY_CAST({p_decision_at} AS TIMESTAMP) IS NOT NULL
+              AND {flag_true_sql(cur_is_in)} = FALSE
+              AND {flag_true_sql(p_is_in)} = TRUE
+              AND COALESCE(CAST({cur_status} AS VARCHAR),'') IN ('','Pending')
+        """).df()
 
     if backlog_df.empty:
         st.info("No items available for intake.")
     else:
-        st.markdown('<div class="table-card">', unsafe_allow_html=True)
-        subset_cols = [c for c in ["Sanction_ID", "Value", "overall_status"] if c in backlog_df.columns]
-        st.dataframe(backlog_df[subset_cols] if subset_cols else backlog_df, use_container_width=True)
-        st.markdown('</div>', unsafe_allow_html=True)
-
-        intake_ids = st.multiselect(
-            "Select Sanction_IDs to load into Pending",
-            backlog_df["Sanction_ID"].astype(str).tolist(),
+        st.dataframe(
+            backlog_df[["Sanction_ID","Value","overall_status"] + [c for c in df.columns if c.endswith("_status")]],
+            use_container_width=True
         )
 
-        st.markdown('<div class="btn-warn">', unsafe_allow_html=True)
-        if st.button(f"Move selected to {LABELS[current_role]} Pending", use_container_width=True):
-            if intake_ids:
-                set_stage_flags_inplace(df, intake_ids, current_role)
+        st.markdown("Select **Sanction_IDs** to move into this stage:")
+        ids_text = st.text_input("IDs (comma-separated)", placeholder="e.g. S001,S002,S010")
+        move_btn = st.button("Move selected into stage")
+
+        if move_btn and ids_text.strip():
+            selected_ids = [x.strip() for x in ids_text.split(",") if x.strip()]
+            # guard: only those present in backlog
+            backlog_ids = set(backlog_df["Sanction_ID"].astype(str))
+            intake_ids = [x for x in selected_ids if x in backlog_ids]
+
+            if not intake_ids:
+                st.warning("No valid IDs to move.")
+            else:
+                cur_is_in, cur_status, _, _ = stage_cols(current_role)
+                df["Sanction_ID"] = df["Sanction_ID"].astype(str)
+                mask = df["Sanction_ID"].isin(intake_ids)
+
+                # Set current stage flag true and set status Pending if empty
+                df.loc[mask, cur_is_in] = 1
+                df.loc[mask, cur_status] = df.loc[mask, cur_status].fillna("Pending").replace("", "Pending")
+
                 # Persist and refresh registration so queries see updates immediately
-                df.to_csv(TRACKER_PATH, index=False)
+                df.to_csv(CSV_PATH, index=False)
                 try:
                     con.unregister("approval")
                 except Exception:
                     pass
                 con.register("approval", df)
-                st.success(f"Loaded {len(intake_ids)} into {LABELS[current_role]} Pending.")
+                st.success(f"Moved {len(intake_ids)} to {current_role}")
                 st.rerun()
-        st.markdown('</div>', unsafe_allow_html=True)
 
 # ==============================
 # Footer
 # ==============================
-st.markdown(
-    '<div class="card" style="margin-top:12px; display:flex; justify-content:space-between; align-items:center;">'
-    f'<div>Logged in as: <b>{current_user}</b></div>'
-    f'<div class="badge primary">Role: {LABELS[current_role]}</div>'
-    '</div>',
-    unsafe_allow_html=True
-)
+st.caption(f"Logged in as: **{current_user}** ({role_display_name(current_role)})")
+
 
 
 
@@ -911,3 +781,4 @@ with st.container():
     st.markdown('<div class="table-card">', unsafe_allow_html=True)
     st.dataframe(snap, hide_index=True, use_container_width=True)
     st.markdown('</div>', unsafe_allow_html=True)
+
