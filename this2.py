@@ -1,329 +1,352 @@
+# ============================================================
 # SanctionApproverDashboard.py
+# ============================================================
 import streamlit as st
 import pandas as pd
 import duckdb
 from pathlib import Path
 
-# =========================
-# Config
-# =========================
+# ------------------------------------------------------------
+# PAGE CONFIG
+# ------------------------------------------------------------
 st.set_page_config(page_title="Sanction Approver Dashboard", layout="wide")
 
-CSV_PATH = Path("approval_tracker_dummy.csv")  # path to your tracker file
+CSV_PATH = Path("approval_tracker_dummy.csv")  # change to actual tracker if needed
 
-# =========================
-# Session / Current user & role
-# =========================
+# ------------------------------------------------------------
+# SESSION / USER CONTEXT
+# ------------------------------------------------------------
 current_user = st.session_state.get("user_email", "sda@company.com")
-current_role = st.session_state.get("user_role", "SDA")  # "SDA"|"DataGuild"|"DigitalGuild"|"ETIDM"
+current_role = st.session_state.get("user_role", "SDA")  # SDA | DataGuild | DigitalGuild | ETIDM
 
-# ---- Fast navigate: if a View button was clicked, jump immediately to Feedback page
 if "navigate_to_feedback" not in st.session_state:
     st.session_state.navigate_to_feedback = False
 if st.session_state.navigate_to_feedback:
     st.session_state.navigate_to_feedback = False
     st.switch_page("app_pages/Feedback_Page.py")
 
-# =========================
-# Load data + ensure columns
-# =========================
+# ------------------------------------------------------------
+# LOAD DATA
+# ------------------------------------------------------------
 if not CSV_PATH.exists():
-    st.error(f"CSV not found at {CSV_PATH.resolve()}")
+    st.error(f"Tracker file not found at {CSV_PATH.resolve()}")
     st.stop()
 
 df = pd.read_csv(CSV_PATH)
 
-# Ensure expected columns exist
-for col, default in [
-    ("Sanction_ID", ""), ("Value", 0.0), ("Overall_status", "Submitted"),
-    ("is_submitter", 1),
-    ("is_in_SDA", 0), ("SDA_status", "Pending"), ("SDA_assigned_to", None), ("SDA_decision_at", None),
-    ("is_in_data_guild", 0), ("data_guild_status", "Pending"), ("data_guild_assigned_to", None), ("data_guild_decision_at", None),
-    ("is_in_digital_guild", 0), ("digital_guild_status", "Pending"), ("digital_guild_assigned_to", None), ("digital_guild_decision_at", None),
-    ("is_in_etidm", 0), ("etidm_status", "Pending"), ("etidm_assigned_to", None), ("etidm_decision_at", None),
-]:
-    if col not in df.columns:
-        df[col] = default
+# ------------------------------------------------------------
+# ENSURE ALL REQUIRED COLUMNS EXIST
+# ------------------------------------------------------------
+required = [
+    ("Sanction_ID", ""), ("Value", 0.0), ("Overall_status", "Submitted"), ("is_submitter", 1),
+    ("is_in_SDA", 0), ("SDA_status", "Pending"), ("SDA_assigned_to", ""), ("SDA_decision_at", ""),
+    ("is_in_data_guild", 0), ("data_guild_status", "Pending"), ("data_guild_assigned_to", ""), ("data_guild_decision_at", ""),
+    ("is_in_digital_guild", 0), ("digital_guild_status", "Pending"), ("digital_guild_assigned_to", ""), ("digital_guild_decision_at", ""),
+    ("is_in_etidm", 0), ("etidm_status", "Pending"), ("etidm_assigned_to", ""), ("etidm_decision_at", "")
+]
+for c, d in required:
+    if c not in df.columns:
+        df[c] = d
 
-# =========================
-# Register into DuckDB in-memory
-# =========================
+# ------------------------------------------------------------
+# REGISTER TO DUCKDB (IN-MEMORY)
+# ------------------------------------------------------------
 con = duckdb.connect()
 con.register("approval", df)
 
-# =========================
-# Flow / Stage helpers
-# =========================
+# ------------------------------------------------------------
+# STAGE MAPPING
+# ------------------------------------------------------------
 ROLE_FLOW = ["SDA", "DataGuild", "DigitalGuild", "ETIDM"]
-
 STAGE_MAP = {
-    "SDA": {
-        "is_in": "is_in_SDA",
-        "status": "SDA_status",
-        "assigned_to": "SDA_assigned_to",
-        "decision_at": "SDA_decision_at",
-    },
-    "DataGuild": {
-        "is_in": "is_in_data_guild",
-        "status": "data_guild_status",
-        "assigned_to": "data_guild_assigned_to",
-        "decision_at": "data_guild_decision_at",
-    },
-    "DigitalGuild": {
-        "is_in": "is_in_digital_guild",
-        "status": "digital_guild_status",
-        "assigned_to": "digital_guild_assigned_to",
-        "decision_at": "digital_guild_decision_at",
-    },
-    "ETIDM": {
-        "is_in": "is_in_etidm",
-        "status": "etidm_status",
-        "assigned_to": "etidm_assigned_to",
-        "decision_at": "etidm_decision_at",
-    },
+    "SDA": {"flag": "is_in_SDA", "status": "SDA_status", "assigned": "SDA_assigned_to", "decision": "SDA_decision_at"},
+    "DataGuild": {"flag": "is_in_data_guild", "status": "data_guild_status", "assigned": "data_guild_assigned_to", "decision": "data_guild_decision_at"},
+    "DigitalGuild": {"flag": "is_in_digital_guild", "status": "digital_guild_status", "assigned": "digital_guild_assigned_to", "decision": "digital_guild_decision_at"},
+    "ETIDM": {"flag": "is_in_etidm", "status": "etidm_status", "assigned": "etidm_assigned_to", "decision": "etidm_decision_at"},
 }
 
-def stage_cols(role: str):
+def stage_cols(role): 
     m = STAGE_MAP[role]
-    return m["is_in"], m["status"], m["assigned_to"], m["decision_at"]
+    return m["flag"], m["status"], m["assigned"], m["decision"]
 
-def prev_role(role: str):
+def prev_role(role):
     i = ROLE_FLOW.index(role)
-    return ROLE_FLOW[i - 1] if i > 0 else None
+    return ROLE_FLOW[i-1] if i > 0 else None
 
-def next_role(role: str):
+def next_role(role):
     i = ROLE_FLOW.index(role)
-    return ROLE_FLOW[i + 1] if i < len(ROLE_FLOW) - 1 else None
+    return ROLE_FLOW[i+1] if i < len(ROLE_FLOW)-1 else None
 
-# ---- Boolean SQL helper (works with 1/0, true/false, yes/no, strings)
-def flag_true_sql(col_name: str) -> str:
+def flag_true_sql(col):
     return f"""
-    CASE
-      WHEN LOWER(CAST({col_name} AS VARCHAR)) IN ('1','true','t','yes','y') THEN TRUE
-      WHEN TRY_CAST({col_name} AS BIGINT) = 1 THEN TRUE
-      ELSE FALSE
-    END
+        CASE
+            WHEN LOWER(CAST({col} AS VARCHAR)) IN ('1','true','t','yes','y') THEN TRUE
+            WHEN TRY_CAST({col} AS BIGINT) = 1 THEN TRUE
+            ELSE FALSE
+        END
     """
 
-# ---- Visibility filter (who sees what)
-def visibility_filter_for(role: str) -> str:
-    """
-    - SDA: items currently in SDA
-    - Other roles: items where previous stage is Approved (and decided),
-      AND the current stage flag is true (i.e., routed to this team)
-    """
-    is_in_col, status_col, _, decision_col = stage_cols(role)
+# ------------------------------------------------------------
+# VISIBILITY FILTER
+# ------------------------------------------------------------
+def visibility_filter(role):
     if role == "SDA":
-        return f"{flag_true_sql(is_in_col)} = TRUE"
-
+        return f"{flag_true_sql('is_in_SDA')} = TRUE"
     p = prev_role(role)
-    p_is_in, p_status, _, p_decision_at = stage_cols(p)
+    p_flag, p_status, _, p_decision = stage_cols(p)
+    cur_flag, _, _, _ = stage_cols(role)
     return (
         f"CAST({p_status} AS VARCHAR) = 'Approved' "
-        f"AND TRY_CAST({p_decision_at} AS TIMESTAMP) IS NOT NULL "
-        f"AND {flag_true_sql(is_in_col)} = TRUE"
+        f"AND TRY_CAST({p_decision} AS TIMESTAMP) IS NOT NULL "
+        f"AND {flag_true_sql(cur_flag)} = TRUE"
     )
 
-# ---- Helper to set stage flags properly (for Intake)
-def set_stage_flags_inplace(df: pd.DataFrame, ids: list[str], stage: str):
-    flags = {
-        "SDA": "is_in_SDA",
-        "DataGuild": "is_in_data_guild",
-        "DigitalGuild": "is_in_digital_guild",
-        "ETIDM": "is_in_etidm",
-    }
-    statuses = {
-        "SDA": "SDA_status",
-        "DataGuild": "data_guild_status",
-        "DigitalGuild": "digital_guild_status",
-        "ETIDM": "etidm_status",
-    }
-    assignees = {
-        "SDA": "SDA_assigned_to",
-        "DataGuild": "data_guild_assigned_to",
-        "DigitalGuild": "digital_guild_assigned_to",
-        "ETIDM": "etidm_assigned_to",
-    }
-
-    mask = df["Sanction_ID"].astype(str).isin([str(x) for x in ids])
-
-    # turn OFF all stage flags first
-    for f in ["is_in_SDA", "is_in_data_guild", "is_in_digital_guild", "is_in_etidm"]:
-        if f in df.columns:
-            df.loc[mask, f] = 0
-
-    # turn ON current stage flag & reset status/assignee
-    df.loc[mask, flags[stage]] = 1
-    df.loc[mask, statuses[stage]] = "Pending"
-    df.loc[mask, assignees[stage]] = None
-
-    # items are no longer raw submissions after entering SDA
-    if stage == "SDA" and "is_submitter" in df.columns:
+# ------------------------------------------------------------
+# UPDATE STAGE FLAGS
+# ------------------------------------------------------------
+def set_stage_flags(df, ids, stage):
+    all_flags = [v["flag"] for v in STAGE_MAP.values()]
+    all_status = [v["status"] for v in STAGE_MAP.values()]
+    mask = df["Sanction_ID"].astype(str).isin([str(i) for i in ids])
+    for f in all_flags:
+        df.loc[mask, f] = 0
+    df.loc[mask, STAGE_MAP[stage]["flag"]] = 1
+    df.loc[mask, STAGE_MAP[stage]["status"]] = "Pending"
+    df.loc[mask, STAGE_MAP[stage]["assigned"]] = None
+    if stage == "SDA":
         df.loc[mask, "is_submitter"] = 0
 
-# =========================
-# UI Title + KPI cards (simple, readable)
-# =========================
-st.title("Sanction Approver Dashboard")
-st.markdown("#### Overview")
+# ------------------------------------------------------------
+# DASHBOARD UI
+# ------------------------------------------------------------
+st.title("📊 Sanction Approver Dashboard")
+st.markdown(f"### Welcome, {current_user} ({current_role})")
 
-def kpi_card(title, value, bg="#E6F4FF", badge_bg="#1D4ED8", badge_color="#FFF"):
-    st.markdown(
-        f"""
-        <div style="
-            background:{bg};
-            border:1px solid #E5E7EB;
-            border-radius:12px;
-            padding:18px;
-            text-align:center;
-            box-shadow:0 2px 6px rgba(0,0,0,0.06);
-        ">
-            <div style="font-size:30px; font-weight:800;">{value}</div>
-            <span style="
-                display:inline-block; padding:6px 12px; border-radius:999px;
-                background:{badge_bg}; color:{badge_color}; font-weight:700;">
-                {title}
-            </span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+flag_col, status_col, assigned_col, decision_col = stage_cols(current_role)
+vf = visibility_filter(current_role)
 
-# =========================
-# Role-scoped datasets (type-safe)
-# =========================
-is_in_col, status_col, assigned_col, decision_col = stage_cols(current_role)
-vf = visibility_filter_for(current_role)
-
-pending_df = con.execute(
-    f"""
-    SELECT *
-    FROM approval
+pending_df = con.execute(f"""
+    SELECT * FROM approval
     WHERE {vf}
-      AND COALESCE(CAST({status_col} AS VARCHAR), 'Pending') IN ('Pending','In Progress')
-    """
-).df()
+      AND COALESCE(CAST({status_col} AS VARCHAR),'Pending') IN ('Pending','In Progress')
+""").df()
 
-approved_df = con.execute(
-    f"""
-    SELECT *
-    FROM approval
+approved_df = con.execute(f"""
+    SELECT * FROM approval
     WHERE {vf}
       AND CAST({status_col} AS VARCHAR) = 'Approved'
-      AND TRY_CAST({decision_col} AS TIMESTAMP) IS NOT NULL
-    """
-).df()
+""").df()
 
-nr = next_role(current_role)
-if nr:
-    nr_is_in, nr_status, _, _ = stage_cols(nr)
-    awaiting_df = con.execute(
-        f"""
-        SELECT *
-        FROM approval
+next_r = next_role(current_role)
+if next_r:
+    next_flag, next_status, _, _ = stage_cols(next_r)
+    awaiting_df = con.execute(f"""
+        SELECT * FROM approval
         WHERE {vf}
           AND CAST({status_col} AS VARCHAR) = 'Approved'
-          AND TRY_CAST({decision_col} AS TIMESTAMP) IS NOT NULL
-          AND (
-                {flag_true_sql(nr_is_in)} = TRUE
-            AND COALESCE(CAST({nr_status} AS VARCHAR), 'Pending') = 'Pending'
-          )
-        """
-    ).df()
+          AND {flag_true_sql(next_flag)} = TRUE
+          AND COALESCE(CAST({next_status} AS VARCHAR),'Pending') = 'Pending'
+    """).df()
 else:
     awaiting_df = pending_df.iloc[0:0].copy()
 
-# =========================
-# KPI Cards
-# =========================
-c1, c2, c3, c4 = st.columns(4)
-with c1: kpi_card("Pending", len(pending_df), "#E6F4FF", "#1D4ED8", "#FFF")
-with c2: kpi_card("Approved", len(approved_df), "#E7F8E6", "#16A34A", "#FFF")
-with c3: kpi_card("Awaiting Others", len(awaiting_df), "#FFE8E8", "#DC2626", "#FFF")
-with c4: kpi_card("Total Items", len(df), "#FFF4E5", "#CA8A04", "#1F2937")
+# KPI Display
+cols = st.columns(4)
+metrics = [("Pending", len(pending_df), "#E6F4FF"), ("Approved", len(approved_df), "#E7F8E6"),
+           ("Awaiting Others", len(awaiting_df), "#FFE8E8"), ("Total Items", len(df), "#FFF4E5")]
+for (t, v, bg), c in zip(metrics, cols):
+    with c:
+        st.markdown(
+            f"""<div style="background:{bg};border-radius:12px;
+            padding:15px;text-align:center;box-shadow:0 2px 5px rgba(0,0,0,0.08)">
+            <div style='font-size:28px;font-weight:700'>{v}</div>
+            <div style='font-size:16px;font-weight:600'>{t}</div></div>""",
+            unsafe_allow_html=True,
+        )
 
 st.divider()
 
-# =========================
-# Pending table + View
-# =========================
-st.markdown(f"### Pending in {current_role}")
-
+# ------------------------------------------------------------
+# PENDING TABLE
+# ------------------------------------------------------------
+st.subheader(f"Pending in {current_role}")
 if not pending_df.empty:
-    # simple list rows with View buttons (keeps session)
-    for _, row in pending_df.iterrows():
+    for _, r in pending_df.iterrows():
         c1, c2 = st.columns([6, 1])
         with c1:
-            st.write(
-                f"**{row['Sanction_ID']}** | Value: {row['Value']} | "
-                f"Status: {row[status_col]} | Stage: {current_role}"
-            )
+            st.markdown(f"**{r['Sanction_ID']}** — Value: {r['Value']} | Status: {r[status_col]}")
         with c2:
-            if st.button("View →", key=f"view_{row['Sanction_ID']}"):
-                st.session_state["selected_sanction_id"] = str(row["Sanction_ID"])
+            if st.button("View →", key=f"view_{r['Sanction_ID']}"):
+                st.session_state["selected_sanction_id"] = str(r["Sanction_ID"])
                 st.session_state.navigate_to_feedback = True
                 st.rerun()
 else:
-    st.info(f"No pending sanctions for {current_role}")
+    st.info("No pending sanctions found.")
 
 st.divider()
 
-# =========================
-# Intake (STRICT: only approved-from-previous-stage, or raw submissions for SDA)
-# =========================
-with st.expander(f"Intake ({current_role})", expanded=False):
+# ------------------------------------------------------------
+# INTAKE BLOCK
+# ------------------------------------------------------------
+st.subheader(f"Intake ({current_role})")
+if current_role == "SDA":
+    backlog = con.execute(f"""
+        SELECT * FROM approval
+        WHERE TRY_CAST(is_submitter AS BIGINT) = 1
+          AND {flag_true_sql('is_in_SDA')} = FALSE
+    """).df()
+else:
+    prev_r = prev_role(current_role)
+    p_flag, p_status, _, p_decision = stage_cols(prev_r)
+    cur_flag, cur_status, _, _ = stage_cols(current_role)
+    backlog = con.execute(f"""
+        SELECT * FROM approval
+        WHERE CAST({p_status} AS VARCHAR) = 'Approved'
+          AND TRY_CAST({p_decision} AS TIMESTAMP) IS NOT NULL
+          AND {flag_true_sql(cur_flag)} = FALSE
+    """).df()
 
-    if current_role == "SDA":
-        # Only raw submissions not yet pulled into SDA
-        backlog_df = con.execute(f"""
-            SELECT *
-            FROM approval
-            WHERE TRY_CAST(is_submitter AS BIGINT) = 1
-              AND {flag_true_sql('is_in_SDA')} = FALSE
-        """).df()
+if backlog.empty:
+    st.info("No items available for intake.")
+else:
+    st.dataframe(backlog[["Sanction_ID", "Value", "Overall_status"]], use_container_width=True)
+    intake_ids = st.multiselect("Select Sanction_IDs to move", backlog["Sanction_ID"].astype(str).tolist())
+    if st.button(f"Move selected to {current_role}"):
+        set_stage_flags(df, intake_ids, current_role)
+        df.to_csv(CSV_PATH, index=False)
+        st.success(f"Moved {len(intake_ids)} sanction(s) to {current_role}")
+        st.rerun()
+
+st.caption(f"Logged in as {current_user} ({current_role})")
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# ============================================================
+# Feedback_Page.py
+# ============================================================
+import os
+from datetime import datetime
+import pandas as pd
+import streamlit as st
+
+# ------------------------------------------------------------
+# CONFIG
+# ------------------------------------------------------------
+TRACKER_PATH = os.getenv("APPROVER_TRACKER_PATH", "approval_tracker_dummy.csv")
+
+STAGES = ["SDA", "DataGuild", "DigitalGuild", "ETIDM"]
+META = {
+    "SDA": {"flag": "is_in_SDA", "status": "SDA_status", "assigned": "SDA_assigned_to", "decision": "SDA_decision_at"},
+    "DataGuild": {"flag": "is_in_data_guild", "status": "data_guild_status", "assigned": "data_guild_assigned_to", "decision": "data_guild_decision_at"},
+    "DigitalGuild": {"flag": "is_in_digital_guild", "status": "digital_guild_status", "assigned": "digital_guild_assigned_to", "decision": "digital_guild_decision_at"},
+    "ETIDM": {"flag": "is_in_etidm", "status": "etidm_status", "assigned": "etidm_assigned_to", "decision": "etidm_decision_at"},
+}
+
+st.set_page_config(page_title="Feedback Page", layout="wide")
+
+def now_iso(): return datetime.now().isoformat(timespec="seconds")
+
+def next_stage(stage):
+    i = STAGES.index(stage)
+    return STAGES[i+1] if i < len(STAGES)-1 else None
+
+def infer_stage(row):
+    for s, meta in META.items():
+        if str(row.get(meta["flag"], "")).lower() in ("1","true","t","yes","y"):
+            return s
+    return "SDA"
+
+# ------------------------------------------------------------
+# LOAD TRACKER
+# ------------------------------------------------------------
+if not os.path.exists(TRACKER_PATH):
+    st.error("Tracker not found.")
+    st.stop()
+
+df = pd.read_csv(TRACKER_PATH)
+df["Sanction_ID"] = df["Sanction_ID"].astype(str)
+
+sid = st.session_state.get("selected_sanction_id")
+if not sid:
+    st.warning("No sanction selected. Go back and click 'View'.")
+    st.stop()
+
+row = df[df["Sanction_ID"] == str(sid)]
+if row.empty:
+    st.error(f"Sanction {sid} not found.")
+    st.stop()
+
+row = row.iloc[0]
+stage = infer_stage(row)
+
+st.title("🧾 Sanction Feedback Page")
+st.markdown(f"### Sanction ID: `{sid}` | Current Stage: **{stage}**")
+
+c1, c2, c3, c4 = st.columns(4)
+with c1: st.metric("Value", row.get("Value", 0))
+with c2: st.metric("Overall Status", row.get("Overall_status", "Submitted"))
+with c3: st.metric("Stage", stage)
+with c4: st.metric("Time", now_iso())
+
+st.divider()
+
+meta = META[stage]
+
+with st.form("decision_form"):
+    choice = st.radio("Decision", ["Approve ✅", "Reject ⛔", "Request changes ✍️"], horizontal=True)
+    assign_to = st.text_input("Assign To (optional)", value=str(row.get(meta["assigned"], "")))
+    comments = st.text_area("Comments (optional)")
+    submitted = st.form_submit_button("Submit Decision")
+
+if submitted:
+    mask = df["Sanction_ID"] == sid
+    decision_time = now_iso()
+    new_status = "Approved" if "Approve" in choice else ("Rejected" if "Reject" in choice else "Changes requested")
+
+    df.loc[mask, meta["status"]] = new_status
+    df.loc[mask, meta["assigned"]] = assign_to
+    df.loc[mask, meta["decision"]] = decision_time
+
+    if new_status == "Approved":
+        nxt = next_stage(stage)
+        df.loc[mask, "Overall_status"] = "In progress" if nxt else "Completed"
+        if nxt:
+            df.loc[mask, "Current Stage"] = nxt
+    elif new_status == "Rejected":
+        df.loc[mask, "Overall_status"] = "Rejected"
     else:
-        # Only those APPROVED by the previous stage, decided, and NOT yet flagged into this stage
-        p = prev_role(current_role)
-        p_is_in, p_status, _, p_decision_at = stage_cols(p)
-        cur_is_in, cur_status, _, _ = stage_cols(current_role)
+        df.loc[mask, "Overall_status"] = "Changes requested"
 
-        backlog_df = con.execute(f"""
-            SELECT *
-            FROM approval
-            WHERE CAST({p_status} AS VARCHAR) = 'Approved'
-              AND TRY_CAST({p_decision_at} AS TIMESTAMP) IS NOT NULL
-              AND {flag_true_sql(cur_is_in)} = FALSE
-              AND (
-                    {flag_true_sql(p_is_in)} = TRUE
-                AND COALESCE(CAST({cur_status} AS VARCHAR),'') IN ('','Pending')
-              )
-        """).df()
+    df.to_csv(TRACKER_PATH, index=False)
+    st.success(f"Decision saved: {new_status}")
+    st.rerun()
 
-    if backlog_df.empty:
-        st.info("No items available for intake.")
-    else:
-        st.dataframe(
-            backlog_df[["Sanction_ID", "Value", "Overall_status"]],
-            use_container_width=True
-        )
-        intake_ids = st.multiselect(
-            "Select Sanction_IDs to intake",
-            backlog_df["Sanction_ID"].astype(str).tolist(),
-        )
-        if st.button(f"Move selected to {current_role}"):
-            if intake_ids:
-                set_stage_flags_inplace(df, intake_ids, current_role)
-                # Persist and refresh registration so queries see updates immediately
-                df.to_csv(CSV_PATH, index=False)
-                try:
-                    con.unregister("approval")
-                except Exception:
-                    pass
-                con.register("approval", df)
-                st.success(f"Moved {len(intake_ids)} to {current_role}")
-                st.rerun()
-
-# =========================
-# Footer
-# =========================
-st.caption(f"Logged in as: **{current_user}** ({current_role})")
+st.divider()
+st.subheader("Sanction Record Snapshot")
+cols = [c for c in df.columns if "status" in c or "decision" in c or "is_in" in c]
+st.dataframe(df[df["Sanction_ID"] == sid][["Sanction_ID"] + cols], use_container_width=True)
