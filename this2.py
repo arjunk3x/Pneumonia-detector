@@ -1,3 +1,4 @@
+# SanctionApproverDashboard.py
 import streamlit as st
 import pandas as pd
 import duckdb
@@ -82,23 +83,19 @@ STAGE_MAP = {
     },
 }
 
-
 def stage_cols(role: str):
     m = STAGE_MAP[role]
     return m["is_in"], m["status"], m["assigned_to"], m["decision_at"]
-
 
 def prev_role(role: str):
     i = ROLE_FLOW.index(role)
     return ROLE_FLOW[i - 1] if i > 0 else None
 
-
 def next_role(role: str):
     i = ROLE_FLOW.index(role)
     return ROLE_FLOW[i + 1] if i < len(ROLE_FLOW) - 1 else None
 
-
-# ---- Boolean SQL helper
+# ---- Boolean SQL helper (works with 1/0, true/false, yes/no, strings)
 def flag_true_sql(col_name: str) -> str:
     return f"""
     CASE
@@ -108,25 +105,26 @@ def flag_true_sql(col_name: str) -> str:
     END
     """
 
-
 # ---- Visibility filter (who sees what)
 def visibility_filter_for(role: str) -> str:
+    """
+    - SDA: items currently in SDA
+    - Other roles: items where previous stage is Approved (and decided),
+      AND the current stage flag is true (i.e., routed to this team)
+    """
     is_in_col, status_col, _, decision_col = stage_cols(role)
-
     if role == "SDA":
         return f"{flag_true_sql(is_in_col)} = TRUE"
 
     p = prev_role(role)
     p_is_in, p_status, _, p_decision_at = stage_cols(p)
-
     return (
         f"CAST({p_status} AS VARCHAR) = 'Approved' "
         f"AND TRY_CAST({p_decision_at} AS TIMESTAMP) IS NOT NULL "
         f"AND {flag_true_sql(is_in_col)} = TRUE"
     )
 
-
-# ---- Helper to set stage flags properly
+# ---- Helper to set stage flags properly (for Intake)
 def set_stage_flags_inplace(df: pd.DataFrame, ids: list[str], stage: str):
     flags = {
         "SDA": "is_in_SDA",
@@ -149,54 +147,50 @@ def set_stage_flags_inplace(df: pd.DataFrame, ids: list[str], stage: str):
 
     mask = df["Sanction_ID"].astype(str).isin([str(x) for x in ids])
 
+    # turn OFF all stage flags first
     for f in ["is_in_SDA", "is_in_data_guild", "is_in_digital_guild", "is_in_etidm"]:
         if f in df.columns:
             df.loc[mask, f] = 0
 
+    # turn ON current stage flag & reset status/assignee
     df.loc[mask, flags[stage]] = 1
     df.loc[mask, statuses[stage]] = "Pending"
     df.loc[mask, assignees[stage]] = None
 
+    # items are no longer raw submissions after entering SDA
     if stage == "SDA" and "is_submitter" in df.columns:
         df.loc[mask, "is_submitter"] = 0
 
-
 # =========================
-# UI Title + KPI cards
+# UI Title + KPI cards (simple, readable)
 # =========================
 st.title("Sanction Approver Dashboard")
-st.markdown('<div class="overview-text">Overview</div>', unsafe_allow_html=True)
+st.markdown("#### Overview")
 
-
-def create_card(title, value, bg_color, badge_bg, badge_color):
+def kpi_card(title, value, bg="#E6F4FF", badge_bg="#1D4ED8", badge_color="#FFF"):
     st.markdown(
         f"""
         <div style="
-            background:{bg_color};
+            background:{bg};
             border:1px solid #E5E7EB;
             border-radius:12px;
             padding:18px;
             text-align:center;
             box-shadow:0 2px 6px rgba(0,0,0,0.06);
         ">
-            <div style="font-size:32px; font-weight:700;">{value}</div>
+            <div style="font-size:30px; font-weight:800;">{value}</div>
             <span style="
-                display:inline-block;
-                padding:5px 12px;
-                border-radius:999px;
-                background:{badge_bg};
-                color:{badge_color};
-                font-size:16px;
-                font-weight:600;
-            ">{title}</span>
+                display:inline-block; padding:6px 12px; border-radius:999px;
+                background:{badge_bg}; color:{badge_color}; font-weight:700;">
+                {title}
+            </span>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-
 # =========================
-# Role-scoped datasets
+# Role-scoped datasets (type-safe)
 # =========================
 is_in_col, status_col, assigned_col, decision_col = stage_cols(current_role)
 vf = visibility_filter_for(current_role)
@@ -207,7 +201,7 @@ pending_df = con.execute(
     FROM approval
     WHERE {vf}
       AND COALESCE(CAST({status_col} AS VARCHAR), 'Pending') IN ('Pending','In Progress')
-    """,
+    """
 ).df()
 
 approved_df = con.execute(
@@ -217,7 +211,7 @@ approved_df = con.execute(
     WHERE {vf}
       AND CAST({status_col} AS VARCHAR) = 'Approved'
       AND TRY_CAST({decision_col} AS TIMESTAMP) IS NOT NULL
-    """,
+    """
 ).df()
 
 nr = next_role(current_role)
@@ -243,14 +237,10 @@ else:
 # KPI Cards
 # =========================
 c1, c2, c3, c4 = st.columns(4)
-with c1:
-    create_card("Pending", len(pending_df), "#E6F4FF", "#1D4ED8", "#FFF")
-with c2:
-    create_card("Approved", len(approved_df), "#E7F8E6", "#16A34A", "#FFF")
-with c3:
-    create_card("Awaiting Others", len(awaiting_df), "#FFE8E8", "#DC2626", "#FFF")
-with c4:
-    create_card("Total Items", len(df), "#FFF4E5", "#CA8A04", "#1F2937")
+with c1: kpi_card("Pending", len(pending_df), "#E6F4FF", "#1D4ED8", "#FFF")
+with c2: kpi_card("Approved", len(approved_df), "#E7F8E6", "#16A34A", "#FFF")
+with c3: kpi_card("Awaiting Others", len(awaiting_df), "#FFE8E8", "#DC2626", "#FFF")
+with c4: kpi_card("Total Items", len(df), "#FFF4E5", "#CA8A04", "#1F2937")
 
 st.divider()
 
@@ -260,6 +250,7 @@ st.divider()
 st.markdown(f"### Pending in {current_role}")
 
 if not pending_df.empty:
+    # simple list rows with View buttons (keeps session)
     for _, row in pending_df.iterrows():
         c1, c2 = st.columns([6, 1])
         with c1:
@@ -278,10 +269,12 @@ else:
 st.divider()
 
 # =========================
-# Intake (Role-aware)
+# Intake (STRICT: only approved-from-previous-stage, or raw submissions for SDA)
 # =========================
 with st.expander(f"Intake ({current_role})", expanded=False):
+
     if current_role == "SDA":
+        # Only raw submissions not yet pulled into SDA
         backlog_df = con.execute(f"""
             SELECT *
             FROM approval
@@ -289,21 +282,30 @@ with st.expander(f"Intake ({current_role})", expanded=False):
               AND {flag_true_sql('is_in_SDA')} = FALSE
         """).df()
     else:
+        # Only those APPROVED by the previous stage, decided, and NOT yet flagged into this stage
         p = prev_role(current_role)
         p_is_in, p_status, _, p_decision_at = stage_cols(p)
-        cur_is_in, _, _, _ = stage_cols(current_role)
+        cur_is_in, cur_status, _, _ = stage_cols(current_role)
+
         backlog_df = con.execute(f"""
             SELECT *
             FROM approval
             WHERE CAST({p_status} AS VARCHAR) = 'Approved'
               AND TRY_CAST({p_decision_at} AS TIMESTAMP) IS NOT NULL
               AND {flag_true_sql(cur_is_in)} = FALSE
+              AND (
+                    {flag_true_sql(p_is_in)} = TRUE
+                AND COALESCE(CAST({cur_status} AS VARCHAR),'') IN ('','Pending')
+              )
         """).df()
 
     if backlog_df.empty:
         st.info("No items available for intake.")
     else:
-        st.dataframe(backlog_df[["Sanction_ID", "Value", "Overall_status"]], use_container_width=True)
+        st.dataframe(
+            backlog_df[["Sanction_ID", "Value", "Overall_status"]],
+            use_container_width=True
+        )
         intake_ids = st.multiselect(
             "Select Sanction_IDs to intake",
             backlog_df["Sanction_ID"].astype(str).tolist(),
@@ -311,6 +313,7 @@ with st.expander(f"Intake ({current_role})", expanded=False):
         if st.button(f"Move selected to {current_role}"):
             if intake_ids:
                 set_stage_flags_inplace(df, intake_ids, current_role)
+                # Persist and refresh registration so queries see updates immediately
                 df.to_csv(CSV_PATH, index=False)
                 try:
                     con.unregister("approval")
