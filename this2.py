@@ -1,34 +1,18 @@
 # app_pages/SanctionApproverDashboard.py
-# Streamlit dashboard with dynamic team headings and sidebar role switcher
-
 import streamlit as st
 import pandas as pd
 import duckdb
 from pathlib import Path
 
-# ==============================
-# Page setup
-# ==============================
 st.set_page_config(page_title="Sanction Approver Dashboard", layout="wide", initial_sidebar_state="expanded")
 
-# ==============================
-# Config / Paths
-# ==============================
-CSV_PATH = Path(st.session_state.get("tracker_csv_path", "approver_tracker.csv"))
-
-# ==============================
-# Session defaults
-# ==============================
+# ---------- Session init (do this BEFORE any access) ----------
 if "user_email" not in st.session_state:
     st.session_state["user_email"] = "sda@company.com"
 if "user_role" not in st.session_state:
-    st.session_state["user_role"] = "SDA"  # SDA | DataGuild | DigitalGuild | ETIDM
+    st.session_state["user_role"] = "SDA"   # SDA | DataGuild | DigitalGuild | ETIDM
 
-current_user = st.session_state["user_email"]
-
-# ==============================
-# Role flow + display mapping
-# ==============================
+# ---------- Constants ----------
 ROLE_FLOW = ["SDA", "DataGuild", "DigitalGuild", "ETIDM"]
 
 def role_display_name(role: str) -> str:
@@ -39,45 +23,6 @@ def role_display_name(role: str) -> str:
         "ETIDM": "ETIDM",
     }.get(role, role)
 
-# Sidebar role switcher (persists)
-try:
-    _idx = ROLE_FLOW.index(st.session_state["user_role"])
-except ValueError:
-    _idx = 0
-picked_role = st.sidebar.selectbox("Team", ROLE_FLOW, index=_idx, format_func=role_display_name)
-st.session_state["user_role"] = picked_role
-current_role = picked_role  # <- use this everywhere below
-
-# ==============================
-# Load data
-# ==============================
-if not CSV_PATH.exists():
-    st.error(f"CSV not found at {CSV_PATH.resolve()}")
-    st.stop()
-
-df = pd.read_csv(CSV_PATH)
-
-# Ensure expected columns exist
-for col, default in [
-    ("Sanction_ID", ""),
-    ("Value", 0.0),
-    ("overall_status", "submitted"),
-    ("is_submitter", 0),
-    ("is_in_SDA", 0), ("SDA_status", "Pending"), ("SDA_assigned_to", None), ("SDA_decision_at", None),
-    ("is_in_data_guild", 0), ("data_guild_status", "Pending"), ("data_guild_assigned_to", None), ("data_guild_decision_at", None),
-    ("is_in_digital_guild", 0), ("digital_guild_status", "Pending"), ("digital_guild_assigned_to", None), ("digital_guild_decision_at", None),
-    ("is_in_etidm", 0), ("etidm_status", "Pending"), ("etidm_assigned_to", None), ("etidm_decision_at", None),
-]:
-    if col not in df.columns:
-        df[col] = default
-
-# DuckDB registration
-con = duckdb.connect()
-con.register("approval", df)
-
-# ==============================
-# Stage helpers
-# ==============================
 STAGE_MAP = {
     "SDA": {"is_in": "is_in_SDA", "status": "SDA_status", "assigned_to": "SDA_assigned_to", "decision_at": "SDA_decision_at"},
     "DataGuild": {"is_in": "is_in_data_guild", "status": "data_guild_status", "assigned_to": "data_guild_assigned_to", "decision_at": "data_guild_decision_at"},
@@ -91,13 +36,9 @@ def stage_cols(role: str):
 
 def prev_role(role: str):
     i = ROLE_FLOW.index(role)
-    return ROLE_FLOW[i - 1] if i > 0 else None
+    return ROLE_FLOW[i-1] if i > 0 else None
 
-def next_role(role: str):
-    i = ROLE_FLOW.index(role)
-    return ROLE_FLOW[i + 1] if i < len(ROLE_FLOW) - 1 else None
-
-# Robust flag truthiness in SQL
+# robust truthy check for 0/1/yes/true
 def flag_true_sql(col_name: str) -> str:
     return f"""
     CASE
@@ -107,83 +48,99 @@ def flag_true_sql(col_name: str) -> str:
     END
     """
 
-# Visibility rules for each role
-# SDA: items currently in SDA and pending
-# Others: items approved by previous stage, decided timestamp present, and current stage pending
-
 def visibility_filter_for(role: str) -> str:
     cur_is_in, cur_status, _, _ = stage_cols(role)
-    p = prev_role(role)
-
     if role == "SDA":
         return f"""
             {flag_true_sql(cur_is_in)} = TRUE
             AND COALESCE(CAST({cur_status} AS VARCHAR),'') IN ('','Pending')
         """
-    else:
-        if not p:
-            return "FALSE"
-        p_is_in, p_status, _, p_decision_at = stage_cols(p)
-        return f"""
-            CAST({p_status} AS VARCHAR) = 'Approved'
-            AND TRY_CAST({p_decision_at} AS TIMESTAMP) IS NOT NULL
-            AND {flag_true_sql(cur_is_in)} = TRUE
-            AND COALESCE(CAST({cur_status} AS VARCHAR),'') IN ('','Pending')
-        """
+    p = prev_role(role)
+    if not p:
+        return "FALSE"
+    p_is_in, p_status, _, p_decision_at = stage_cols(p)
+    return f"""
+        CAST({p_status} AS VARCHAR) = 'Approved'
+        AND TRY_CAST({p_decision_at} AS TIMESTAMP) IS NOT NULL
+        AND {flag_true_sql(cur_is_in)} = TRUE
+        AND COALESCE(CAST({cur_status} AS VARCHAR),'') IN ('','Pending')
+    """
 
-# ==============================
-# Header & KPIs
-# ==============================
+# ---------- Sidebar: Team switcher (persist to session) ----------
+try:
+    _idx = ROLE_FLOW.index(st.session_state["user_role"])
+except ValueError:
+    _idx = 0
+
+picked = st.sidebar.selectbox("Team", ROLE_FLOW, index=_idx, format_func=role_display_name, key="team_selectbox")
+# write back to session each run (source of truth)
+st.session_state["user_role"] = picked
+
+# ---------- Paths / Data ----------
+CSV_PATH = Path(st.session_state.get("tracker_csv_path", "approver_tracker.csv"))
+if not CSV_PATH.exists():
+    st.error(f"CSV not found at {CSV_PATH.resolve()}")
+    st.stop()
+
+df = pd.read_csv(CSV_PATH)
+
+# ensure cols exist
+for col, default in [
+    ("Sanction_ID", ""), ("Value", 0.0), ("overall_status", "submitted"), ("is_submitter", 0),
+    ("is_in_SDA", 0), ("SDA_status", "Pending"), ("SDA_assigned_to", None), ("SDA_decision_at", None),
+    ("is_in_data_guild", 0), ("data_guild_status", "Pending"), ("data_guild_assigned_to", None), ("data_guild_decision_at", None),
+    ("is_in_digital_guild", 0), ("digital_guild_status", "Pending"), ("digital_guild_assigned_to", None), ("digital_guild_decision_at", None),
+    ("is_in_etidm", 0), ("etidm_status", "Pending"), ("etidm_assigned_to", None), ("etidm_decision_at", None),
+]:
+    if col not in df.columns:
+        df[col] = default
+
+con = duckdb.connect()
+con.register("approval", df)
+
+# ---------- Header ----------
+current_role = st.session_state["user_role"]  # read directly from session
 st.title("Sanction Approver Dashboard")
 st.caption("Filter, review and act on sanctions by stage.")
 
-cur_is_in, status_col, _, _ = stage_cols(current_role)
-pending_df = con.execute(f"""
-    SELECT * FROM approval
-    WHERE {visibility_filter_for(current_role)}
-""").df()
+# small debug chip so you can see what the app thinks
+st.write(f"🧭 Current team: **{role_display_name(current_role)}**")
 
-c1, c2, c3, c4 = st.columns(4)
-with c1:
-    st.metric("Pending", len(pending_df))
-with c2:
-    st.metric("Team", role_display_name(current_role))
-with c3:
-    st.metric("CSV rows", len(df))
-with c4:
-    st.metric("Unique IDs", df["Sanction_ID"].nunique())
+# ---------- Pending ----------
+_, status_col, _, _ = stage_cols(current_role)
+pending_df = con.execute(f"SELECT * FROM approval WHERE {visibility_filter_for(current_role)}").df()
+
+c1, c2, c3 = st.columns(3)
+with c1: st.metric("Pending", len(pending_df))
+with c2: st.metric("Team", role_display_name(current_role))
+with c3: st.metric("Unique IDs", df["Sanction_ID"].nunique())
 
 st.divider()
 
-# ==============================
-# Pending table + View
-# ==============================
-st.markdown(f"### Pending in **{role_display_name(current_role)}**")
+# ***** Use session directly in the heading (no local copies) *****
+st.markdown(f"### Pending in **{role_display_name(st.session_state['user_role'])}**")
 
 if not pending_df.empty:
     for _, row in pending_df.iterrows():
         c_left, c_right = st.columns([6, 1])
         with c_left:
             st.write(
-                f"**{row['Sanction_ID']}** | Value: {row.get('Value', '')} | "
-                f"Status: {row[status_col]} | Stage: {role_display_name(current_role)}"
+                f"**{row['Sanction_ID']}** | Value: {row.get('Value','')} | "
+                f"Status: {row[status_col]} | Stage: {role_display_name(st.session_state['user_role'])}"
             )
         with c_right:
             if st.button("View ↗", key=f"view_{row['Sanction_ID']}"):
                 st.session_state["selected_sanction_id"] = str(row["Sanction_ID"])
-                # try Streamlit 1.30+ page switch
                 try:
                     st.switch_page("app_pages/Feedback_Page.py")
                 except Exception:
                     st.session_state["navigate_to_feedback"] = True
                 st.rerun()
 else:
-    st.info(f"No pending sanctions for **{role_display_name(current_role)}**.")
+    st.info(f"No pending sanctions for **{role_display_name(st.session_state['user_role'])}**.")
 
-# ==============================
-# Intake (role-aware)
-# ==============================
-with st.expander(f"Intake ({role_display_name(current_role)})", expanded=False):
+# ---------- Intake ----------
+with st.expander(f"Intake ({role_display_name(st.session_state['user_role'])})", expanded=False):
     if current_role == "SDA":
         backlog_df = con.execute(f"""
             SELECT * FROM approval
@@ -206,40 +163,29 @@ with st.expander(f"Intake ({role_display_name(current_role)})", expanded=False):
     if backlog_df.empty:
         st.info("No items available for intake.")
     else:
-        show_cols = [c for c in ["Sanction_ID", "Value", "overall_status"] if c in backlog_df.columns]
-        # also show any *_status columns for quick scan
-        show_cols += [c for c in backlog_df.columns if c.endswith("_status")]
-        st.dataframe(backlog_df[show_cols], use_container_width=True)
+        cols = [c for c in ["Sanction_ID","Value","overall_status"] if c in backlog_df.columns]
+        cols += [c for c in backlog_df.columns if c.endswith("_status")]
+        st.dataframe(backlog_df[cols], use_container_width=True)
 
         ids_text = st.text_input("Sanction_IDs to move (comma-separated)", placeholder="e.g. S001,S002,S010")
-        move_btn = st.button("Move selected into this stage")
-
-        if move_btn and ids_text.strip():
-            selected_ids = [x.strip() for x in ids_text.split(",") if x.strip()]
-            backlog_ids = set(backlog_df["Sanction_ID"].astype(str))
-            intake_ids = [x for x in selected_ids if x in backlog_ids]
-
+        if st.button("Move selected into this stage") and ids_text.strip():
+            sel = [x.strip() for x in ids_text.split(",") if x.strip()]
+            valid = set(backlog_df["Sanction_ID"].astype(str))
+            intake_ids = [x for x in sel if x in valid]
             if not intake_ids:
                 st.warning("No valid IDs to move.")
             else:
-                cur_is_in, cur_status, _, _ = stage_cols(current_role)
+                cur_is_in, cur_status, _, _ = stage_cols(st.session_state["user_role"])
                 df["Sanction_ID"] = df["Sanction_ID"].astype(str)
                 mask = df["Sanction_ID"].isin(intake_ids)
-
                 df.loc[mask, cur_is_in] = 1
                 df.loc[mask, cur_status] = df.loc[mask, cur_status].fillna("Pending").replace("", "Pending")
-
-                # persist
                 df.to_csv(CSV_PATH, index=False)
-                try:
-                    con.unregister("approval")
-                except Exception:
-                    pass
+                try: con.unregister("approval")
+                except Exception: pass
                 con.register("approval", df)
-                st.success(f"Moved {len(intake_ids)} to {role_display_name(current_role)}")
+                st.success(f"Moved {len(intake_ids)} to {role_display_name(st.session_state['user_role'])}")
                 st.rerun()
 
-# ==============================
-# Footer
-# ==============================
-st.caption(f"Logged in as: **{current_user}** ({role_display_name(current_role)})")
+# ---------- Footer ----------
+st.caption(f"Logged in as: **{st.session_state['user_email']}** ({role_display_name(st.session_state['user_role'])})")
