@@ -1,6 +1,8 @@
 # app_pages/SanctionApproverDashboard.py
-# Streamlit dashboard for role-scoped sanction approvals.
+# Streamlit dashboard for role-scoped sanction approvals with polished styling.
+# Uses APPROVER_TRACKER_PATH (default: "approver_tracker.csv") for data.
 
+import os
 import streamlit as st
 import pandas as pd
 import duckdb
@@ -9,16 +11,95 @@ from pathlib import Path
 # ==============================
 # Config
 # ==============================
-st.set_page_config(page_title="Sanction Approver Dashboard", layout="wide")
+st.set_page_config(page_title="Sanction Approver Dashboard", layout="wide", initial_sidebar_state="expanded")
 
-# Path to your tracker file (can be overridden by st.session_state["tracker_csv_path"])
-CSV_PATH = Path(st.session_state.get("tracker_csv_path", r"C:\Users\Arjun.Krishna\Downloads\approval_tracker_dummy.csv"))
+# Global CSS to match Feedback page look & feel
+st.markdown("""
+<style>
+:root{
+  --bg:#f7f8fb;
+  --card:#ffffff;
+  --muted:#6b7280;
+  --ink:#111827;
+  --primary:#4f46e5;
+  --primary-weak:#eef2ff;
+  --ok:#10b981;
+  --ok-weak:#ecfdf5;
+  --warn:#f59e0b;
+  --warn-weak:#fff7ed;
+  --danger:#ef4444;
+  --danger-weak:#fef2f2;
+  --ring:#e5e7eb;
+  --shadow:0 10px 25px rgba(0,0,0,.07);
+  --shadow-sm:0 2px 8px rgba(0,0,0,.06);
+  --radius:16px;
+  --radius-sm:12px;
+}
+
+html, body { background: var(--bg); }
+.block-container { padding-top: 1.0rem; }
+
+.card{
+  border:1px solid var(--ring);
+  background: var(--card);
+  border-radius: var(--radius);
+  padding:16px 18px;
+  box-shadow: var(--shadow-sm);
+}
+
+.header{
+  display:flex; align-items:center; justify-content:space-between;
+  margin-bottom: 8px;
+}
+
+.kpi{
+  position:relative; overflow:hidden;
+  background:linear-gradient(180deg,#fff, #fafafa);
+  border:1px solid var(--ring); border-radius: var(--radius);
+  padding:16px; box-shadow: var(--shadow-sm);
+  text-align:center;
+}
+.kpi .label{ font-size:13px; color:var(--muted); }
+.kpi .value{ font-size:26px; font-weight:800; color:var(--ink); }
+
+.grid{ display:grid; gap:16px; grid-template-columns: repeat(12, minmax(0,1fr)); }
+.col-3{grid-column: span 3 / span 3;} .col-4{grid-column: span 4 / span 4;} .col-6{grid-column: span 6 / span 6;} .col-12{grid-column: span 12 / span 12;}
+@media (max-width:1100px){ .col-3, .col-4, .col-6 { grid-column: span 12 / span 12; } }
+
+.table-card .stDataFrame{ border-radius:12px; overflow:hidden; box-shadow: var(--shadow-sm); }
+
+.badge{
+  display:inline-flex; align-items:center; gap:6px;
+  font-size:12px; font-weight:700;
+  padding:4px 10px; border-radius:999px;
+  border:1px solid var(--ring); background:#fff; color:#111827;
+}
+.badge.primary{ background:var(--primary-weak); color:#312e81; border-color:#c7d2fe; }
+
+.stButton>button{
+  border-radius:12px; padding:10px 16px; font-weight:800;
+  border:1px solid var(--ring); background:#fff; color:#111827;
+  transition:.16s ease; box-shadow: var(--shadow-sm);
+}
+.stButton>button:hover{ transform:translateY(-1px); box-shadow: var(--shadow); }
+.btn-primary>button{ background: var(--primary) !important; color:#fff !important; border-color: transparent !important; }
+.btn-warn>button{ background: var(--warn) !important; color:#111827 !important; border-color: transparent !important; }
+.btn-danger>button{ background: var(--danger) !important; color:#fff !important; border-color: transparent !important; }
+</style>
+""", unsafe_allow_html=True)
+
+# ==============================
+# Paths / Data sources
+# ==============================
+# Override with env var if you want: set APPROVER_TRACKER_PATH="C:\\full\\path\\approver_tracker.csv"
+TRACKER_PATH = Path(os.getenv("APPROVER_TRACKER_PATH", "approver_tracker.csv"))
 
 # ==============================
 # Session / Current user & role
 # ==============================
 current_user = st.session_state.get("user_email", "sda@company.com")
-current_role = st.session_state.get("user_role", "SDA")  # "SDA" | "DataGuild" | "DigitalGuild" | "ETIDM"
+# Allowed roles: "SDA", "DataGuild", "DigitalGuild", "ETIDM"
+current_role = st.session_state.get("user_role", "SDA")
 
 # ---- Fast navigate: if a View button was clicked, jump immediately to Feedback page
 if "navigate_to_feedback" not in st.session_state:
@@ -26,25 +107,25 @@ if "navigate_to_feedback" not in st.session_state:
 if st.session_state.navigate_to_feedback:
     st.session_state.navigate_to_feedback = False
     try:
-        st.switch_page("app_pages/Feedback_Page.py")  # streamlit 1.32+ multipage
+        st.switch_page("app_pages/Feedback_Page.py")  # Streamlit multipage routing
     except Exception:
         pass
 
 # ==============================
 # Load data + ensure columns
 # ==============================
-if not CSV_PATH.exists():
-    st.error(f"CSV not found at {CSV_PATH.resolve()}")
+if not TRACKER_PATH.exists():
+    st.error(f"Tracker CSV not found at {TRACKER_PATH.resolve()}")
     st.stop()
 
-df = pd.read_csv(CSV_PATH)
+df = pd.read_csv(TRACKER_PATH)
 
 # Ensure expected columns exist (fill missing)
 for col, default in [
     ("Sanction_ID", ""),
     ("Value", 0.0),
     ("overall_status", "submitted"),
-    ("Current Stage", ""),            # <— used for strict scoping
+    ("Current Stage", ""),
     ("is_submitter", 0),
     ("is_in_SDA", 0), ("SDA_status", "Pending"), ("SDA_assigned_to", None), ("SDA_decision_at", None),
     ("is_in_data_guild", 0), ("data_guild_status", "Pending"), ("data_guild_assigned_to", None), ("data_guild_decision_at", None),
@@ -62,6 +143,7 @@ con.register("approval", df)
 # Flow / Stage helpers
 # ==============================
 ROLE_FLOW = ["SDA", "DataGuild", "DigitalGuild", "ETIDM"]
+LABELS = {"SDA":"SDA", "DataGuild":"Data Guild", "DigitalGuild":"Digital Guild", "ETIDM":"ETIDM"}
 
 STAGE_MAP = {
     "SDA": {
@@ -69,28 +151,24 @@ STAGE_MAP = {
         "status": "SDA_status",
         "assigned_to": "SDA_assigned_to",
         "decision_at": "SDA_decision_at",
-        "label": "SDA",
     },
     "DataGuild": {
         "is_in": "is_in_data_guild",
         "status": "data_guild_status",
         "assigned_to": "data_guild_assigned_to",
         "decision_at": "data_guild_decision_at",
-        "label": "Data Guild",
     },
     "DigitalGuild": {
         "is_in": "is_in_digital_guild",
         "status": "digital_guild_status",
         "assigned_to": "digital_guild_assigned_to",
         "decision_at": "digital_guild_decision_at",
-        "label": "Digital Guild",
     },
     "ETIDM": {
         "is_in": "is_in_etidm",
         "status": "etidm_status",
         "assigned_to": "etidm_assigned_to",
         "decision_at": "etidm_decision_at",
-        "label": "ETIDM",
     },
 }
 
@@ -139,7 +217,7 @@ def intake_scope_for(role: str) -> str:
         f"AND TRY_CAST({p_decision_at} AS TIMESTAMP) IS NOT NULL "
         f"AND {flag_true_sql(cur_is_in)} = FALSE "
         f"AND COALESCE(CAST({cur_status} AS VARCHAR),'') IN ('','Pending') "
-        f'AND COALESCE(CAST("Current Stage" AS VARCHAR), \'\') = \'{role}\''  # already handed off to this role
+        f'AND COALESCE(CAST("Current Stage" AS VARCHAR), \'\') = \'{role}\''
     )
 
 def approved_scope_for(role: str) -> str:
@@ -182,42 +260,31 @@ def set_stage_flags_inplace(df: pd.DataFrame, ids: list[str], stage: str):
     df.loc[mask, flags[stage]] = 1
     df.loc[mask, statuses[stage]] = "Pending"
     df.loc[mask, assignees[stage]] = None
-    df.loc[mask, "Current Stage"] = stage  # <— critical to avoid cross-stage leakage
+    df.loc[mask, "Current Stage"] = stage
 
     # items are no longer raw submissions after entering SDA
     if stage == "SDA" and "is_submitter" in df.columns:
         df.loc[mask, "is_submitter"] = 0
 
 # ==============================
-# UI Title + KPI cards
+# Header
 # ==============================
-st.title("Sanction Approver Dashboard")
-st.markdown("### Overview")
+st.markdown(
+    '<div class="card header"><h1 style="margin:0">Sanction Approver Dashboard</h1>'
+    f'<span class="badge primary">Role: {LABELS[current_role]}</span></div>',
+    unsafe_allow_html=True
+)
 
-def kpi_card(title, value, bg="#E6F4FF", badge_bg="#1D4ED8", badge_color="#FFF"):
+# ==============================
+# KPI Cards
+# ==============================
+def kpi_card(title, value):
     st.markdown(
-        f"""
-        <div style="
-            background:{bg};
-            border:1px solid #E5E7EB;
-            border-radius:12px;
-            padding:18px;
-            text-align:center;
-            box-shadow:0 2px 6px rgba(0,0,0,0.06);
-        ">
-            <div style="font-size:30px; font-weight:800;">{value}</div>
-            <span style="display:inline-block; padding:6px 12px; border-radius:999px;
-                         background:{badge_bg}; color:{badge_color}; font-weight:700;">
-                {title}
-            </span>
-        </div>
-        """,
+        f'<div class="kpi"><div class="value">{value}</div><div class="label">{title}</div></div>',
         unsafe_allow_html=True,
     )
 
-# ==============================
 # Role-scoped datasets
-# ==============================
 is_in_col, status_col, assigned_col, decision_col = stage_cols(current_role)
 
 pending_df = con.execute(
@@ -250,88 +317,88 @@ if nr:
 else:
     awaiting_df = pending_df.iloc[0:0].copy()
 
-# ==============================
-# KPI Cards
-# ==============================
-c1, c2, c3, c4 = st.columns(4)
-with c1: kpi_card("Pending", len(pending_df), "#E6F4FF", "#1D4ED8", "#FFF")
-with c2: kpi_card("Approved (this stage)", len(approved_df), "#E7F8E6", "#16A34A", "#FFF")
-with c3: kpi_card("Awaiting Next Stage", len(awaiting_df), "#FFE8D8", "#DC2626", "#FFF")
-with c4: kpi_card("Total Items", len(df), "#FFF4E5", "#CBA048", "#1F2937")
+# KPI grid
+st.markdown('<div class="grid">', unsafe_allow_html=True)
+st.markdown('<div class="col-3">', unsafe_allow_html=True); kpi_card("Pending", len(pending_df)); st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('<div class="col-3">', unsafe_allow_html=True); kpi_card("Approved (this stage)", len(approved_df)); st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('<div class="col-3">', unsafe_allow_html=True); kpi_card("Awaiting Next Stage", len(awaiting_df)); st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('<div class="col-3">', unsafe_allow_html=True); kpi_card("Total Items", len(df)); st.markdown('</div>', unsafe_allow_html=True)
+st.markdown('</div>', unsafe_allow_html=True)
 
 st.divider()
 
 # ==============================
 # Pending table + View
 # ==============================
-st.markdown(f"### Pending in **{STAGE_MAP[current_role]['label']}**")
+st.markdown(f"### Pending in **{LABELS[current_role]}**")
 
 if not pending_df.empty:
-    # simple rows with view buttons
-    for _, row in pending_df.iterrows():
-        c1, c2 = st.columns([6, 1])
-        with c1:
-            st.write(
-                f"**{row['Sanction_ID']}** | Value: {row.get('Value', '')} | "
-                f"Status: {row[status_col]} | Stage: {STAGE_MAP[current_role]['label']}"
-            )
-        with c2:
-            if st.button("View ↗", key=f"view_{row['Sanction_ID']}"):
-                st.session_state["selected_sanction_id"] = str(row["Sanction_ID"])
-                st.session_state.navigate_to_feedback = True
-                st.rerun()
+    with st.container():
+        for _, row in pending_df.iterrows():
+            c1, c2 = st.columns([6, 1])
+            with c1:
+                st.markdown(
+                    '<div class="card" style="margin-bottom:8px">'
+                    f"<b>{row['Sanction_ID']}</b> • Value: {row.get('Value', '')} • "
+                    f"Status: {row[status_col]} • Stage: {LABELS[current_role]}"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+            with c2:
+                with st.container():
+                    st.markdown('<div class="btn-primary">', unsafe_allow_html=True)
+                    if st.button("View ↗", key=f"view_{row['Sanction_ID']}", use_container_width=True):
+                        st.session_state["selected_sanction_id"] = str(row["Sanction_ID"])
+                        st.session_state.navigate_to_feedback = True
+                        st.rerun()
+                    st.markdown('</div>', unsafe_allow_html=True)
 else:
-    st.info(f"No pending sanctions for **{STAGE_MAP[current_role]['label']}**.")
+    st.info(f"No pending sanctions for **{LABELS[current_role]}**.")
 
 # ==============================
 # Intake (STRICT)
 # ==============================
-with st.expander(f"Intake ({STAGE_MAP[current_role]['label']})", expanded=False):
+with st.expander(f"Intake ({LABELS[current_role]})", expanded=False):
     backlog_df = con.execute(f"SELECT * FROM approval WHERE {intake_scope_for(current_role)}").df()
 
     if backlog_df.empty:
         st.info("No items available for intake.")
     else:
-        st.dataframe(
-            backlog_df[["Sanction_ID", "Value", "overall_status"]]
-            if set(["Sanction_ID", "Value", "overall_status"]).issubset(backlog_df.columns)
-            else backlog_df,
-            use_container_width=True
-        )
+        st.markdown('<div class="table-card">', unsafe_allow_html=True)
+        subset_cols = [c for c in ["Sanction_ID", "Value", "overall_status"] if c in backlog_df.columns]
+        st.dataframe(backlog_df[subset_cols] if subset_cols else backlog_df, use_container_width=True)
+        st.markdown('</div>', unsafe_allow_html=True)
 
         intake_ids = st.multiselect(
             "Select Sanction_IDs to load into Pending",
             backlog_df["Sanction_ID"].astype(str).tolist(),
         )
 
-        if st.button(f"Move selected to {STAGE_MAP[current_role]['label']} Pending"):
+        st.markdown('<div class="btn-warn">', unsafe_allow_html=True)
+        if st.button(f"Move selected to {LABELS[current_role]} Pending", use_container_width=True):
             if intake_ids:
                 set_stage_flags_inplace(df, intake_ids, current_role)
                 # Persist and refresh registration so queries see updates immediately
-                df.to_csv(CSV_PATH, index=False)
+                df.to_csv(TRACKER_PATH, index=False)
                 try:
                     con.unregister("approval")
                 except Exception:
                     pass
                 con.register("approval", df)
-                st.success(f"Loaded {len(intake_ids)} into {STAGE_MAP[current_role]['label']} Pending.")
+                st.success(f"Loaded {len(intake_ids)} into {LABELS[current_role]} Pending.")
                 st.rerun()
+        st.markdown('</div>', unsafe_allow_html=True)
 
 # ==============================
 # Footer
 # ==============================
-st.caption(f"Logged in as: **{current_user}** ({STAGE_MAP[current_role]['label']})")
-
-
-
-
-
-
-
-
-
-
-
+st.markdown(
+    '<div class="card" style="margin-top:12px; display:flex; justify-content:space-between; align-items:center;">'
+    f'<div>Logged in as: <b>{current_user}</b></div>'
+    f'<div class="badge primary">Role: {LABELS[current_role]}</div>'
+    '</div>',
+    unsafe_allow_html=True
+)
 
 
 
@@ -358,6 +425,9 @@ st.caption(f"Logged in as: **{current_user}** ({STAGE_MAP[current_role]['label']
 
 # app_pages/Feedback_Page.py
 # Ultra-styled feedback page with stage actions that persist to approver_tracker.csv
+# Uses:
+#   APPROVER_TRACKER_PATH (default: "approver_tracker.csv")
+#   SANCTIONS_PATH        (default: "sanctions_data.csv")
 
 import os
 from datetime import datetime
@@ -365,17 +435,20 @@ import pandas as pd
 import streamlit as st
 
 # =========================
-# CONFIG
+# CONFIG (paths)
 # =========================
 SANCTIONS_PATH        = os.getenv("SANCTIONS_PATH", "sanctions_data.csv")
 APPROVER_TRACKER_PATH = os.getenv("APPROVER_TRACKER_PATH", "approver_tracker.csv")
 
-STAGES = ["SDA", "Data Guild", "DigitalGuild", "ETIDM"]
+# Canonical workflow names (NO spaces -> matches Dashboard "Current Stage")
+STAGES = ["SDA", "DataGuild", "DigitalGuild", "ETIDM"]
+LABELS = {"SDA":"SDA", "DataGuild":"Data Guild", "DigitalGuild":"Digital Guild", "ETIDM":"ETIDM"}
+
 STAGE_KEYS = {
-    "SDA": {"flag": "is_in_SDA", "status": "SDA_status", "assigned_to": "SDA_assigned_to", "decision_at": "SDA_decision_at"},
-    "Data Guild": {"flag": "is_in_data_guild", "status": "data_guild_status", "assigned_to": "data_guild_assigned_to", "decision_at": "data_guild_decision_at"},
-    "DigitalGuild": {"flag": "is_in_digital_guild", "status": "digital_guild_status", "assigned_to": "digital_guild_assigned_to", "decision_at": "digital_guild_decision_at"},
-    "ETIDM": {"flag": "is_in_etidm", "status": "etidm_status", "assigned_to": "etidm_assigned_to", "decision_at": "etidm_decision_at"},
+    "SDA":         {"flag": "is_in_SDA",         "status": "SDA_status",         "assigned_to": "SDA_assigned_to",         "decision_at": "SDA_decision_at"},
+    "DataGuild":   {"flag": "is_in_data_guild",  "status": "data_guild_status",  "assigned_to": "data_guild_assigned_to",  "decision_at": "data_guild_decision_at"},
+    "DigitalGuild":{"flag": "is_in_digital_guild","status":"digital_guild_status","assigned_to":"digital_guild_assigned_to","decision_at":"digital_guild_decision_at"},
+    "ETIDM":       {"flag": "is_in_etidm",       "status": "etidm_status",       "assigned_to": "etidm_assigned_to",       "decision_at": "etidm_decision_at"},
 }
 
 # =========================
@@ -383,7 +456,6 @@ STAGE_KEYS = {
 # =========================
 st.set_page_config(page_title="Feedback | Sanctions", layout="wide", initial_sidebar_state="expanded")
 
-# Global CSS — carefully crafted for polish & responsiveness
 st.markdown("""
 <style>
 :root{
@@ -391,13 +463,13 @@ st.markdown("""
   --card:#ffffff;
   --muted:#6b7280;
   --ink:#111827;
-  --primary:#4f46e5;
+  --primary:#4f46e5;   /* indigo-600 */
   --primary-weak:#eef2ff;
-  --ok:#10b981;
+  --ok:#10b981;        /* emerald-500 */
   --ok-weak:#ecfdf5;
-  --warn:#f59e0b;
+  --warn:#f59e0b;      /* amber-500 */
   --warn-weak:#fff7ed;
-  --danger:#ef4444;
+  --danger:#ef4444;    /* red-500 */
   --danger-weak:#fef2f2;
   --ring:#e5e7eb;
   --shadow:0 10px 25px rgba(0,0,0,.07);
@@ -405,23 +477,63 @@ st.markdown("""
   --radius:16px;
   --radius-sm:12px;
 }
+
 html, body { background: var(--bg); }
 .block-container { padding-top: 1.2rem; }
-.card{ border:1px solid var(--ring); background: var(--card); border-radius: var(--radius); padding:16px 18px; box-shadow: var(--shadow-sm); }
-.kpi{ position:relative; overflow:hidden; background:linear-gradient(180deg,#fff, #fafafa); }
-.kpi .label{ font-size:13px; color:var(--muted); } .kpi .value{ font-size:22px; font-weight:800; color:var(--ink); } .kpi .badge{ position:absolute; right:12px; top:12px; }
-.badge{ display:inline-flex; align-items:center; gap:6px; font-size:12px; font-weight:700; padding:4px 10px; border-radius:999px; border:1px solid var(--ring); background:#fff; color:#111827; }
+
+.card{
+  border:1px solid var(--ring);
+  background: var(--card);
+  border-radius: var(--radius);
+  padding:16px 18px;
+  box-shadow: var(--shadow-sm);
+}
+
+.kpi{
+  position:relative;
+  overflow:hidden;
+  background:linear-gradient(180deg,#fff, #fafafa);
+}
+.kpi .label{ font-size:13px; color:var(--muted); }
+.kpi .value{ font-size:22px; font-weight:800; color:var(--ink); }
+.kpi .badge{ position:absolute; right:12px; top:12px; }
+
+.badge{
+  display:inline-flex; align-items:center; gap:6px;
+  font-size:12px; font-weight:700;
+  padding:4px 10px; border-radius:999px;
+  border:1px solid var(--ring); background:#fff; color:#111827;
+}
+.badge i{ font-style:normal; opacity:.9; }
+
 .badge.ok{ background:var(--ok-weak); color:#065f46; border-color:#bdf3dd; }
 .badge.warn{ background:var(--warn-weak); color:#7c4a02; border-color:#ffe1b3; }
 .badge.danger{ background:var(--danger-weak); color:#7f1d1d; border-color:#fecaca; }
 .badge.primary{ background:var(--primary-weak); color:#312e81; border-color:#c7d2fe; }
+
 .pill{ display:inline-block; padding:2px 10px; font-size:12px; font-weight:700; border-radius:999px; }
-.pill.ok{background:var(--ok-weak); color:#065f46} .pill.warn{background:var(--warn-weak); color:#7c4a02} .pill.danger{background:var(--danger-weak); color:#7f1d1d} .pill.info{background:var(--primary-weak); color:#3730a3}
-.grid{ display:grid; gap:16px; grid-template-columns: repeat(12, minmax(0,1fr)); }
-.col-3{grid-column: span 3 / span 3;} .col-4{grid-column: span 4 / span 4;} .col-6{grid-column: span 6 / span 6;} .col-12{grid-column: span 12 / span 12;}
-@media (max-width:1100px){ .col-3, .col-4, .col-6 { grid-column: span 12 / span 12; } }
+.pill.ok{background:var(--ok-weak); color:#065f46}
+.pill.warn{background:var(--warn-weak); color:#7c4a02}
+.pill.danger{background:var(--danger-weak); color:#7f1d1d}
+.pill.info{background:var(--primary-weak); color:#3730a3}
+
+.grid{
+  display:grid; gap:16px;
+  grid-template-columns: repeat(12, minmax(0,1fr));
+}
+.col-3{grid-column: span 3 / span 3;}
+.col-4{grid-column: span 4 / span 4;}
+.col-6{grid-column: span 6 / span 6;}
+.col-12{grid-column: span 12 / span 12;}
+@media (max-width:1100px){
+  .col-3, .col-4, .col-6 { grid-column: span 12 / span 12; }
+}
+
 .flow{ display:flex; align-items:stretch; gap:12px; flex-wrap:wrap; }
-.step{ flex:1 1 220px; background:#fff; border:1px dashed var(--ring); border-radius:var(--radius-sm); padding:12px 14px; box-shadow:var(--shadow-sm); }
+.step{
+  flex:1 1 220px; background:#fff; border:1px dashed var(--ring);
+  border-radius:var(--radius-sm); padding:12px 14px; box-shadow:var(--shadow-sm);
+}
 .step .title{ font-weight:800; margin-bottom:4px; }
 .step .meta{ font-size:12px; color:var(--muted); }
 .step.active{ border-color:var(--primary); background:var(--primary-weak); }
@@ -429,16 +541,31 @@ html, body { background: var(--bg); }
 .step .row{ display:flex; gap:8px; align-items:center; margin-top:6px; }
 .step .row .lbl{ width:78px; font-size:12px; color:var(--muted); }
 .step .row .val{ font-weight:700; color:var(--ink); font-size:13px; }
+
 .arrow{ display:flex; align-items:center; color:#9ca3af; font-size:22px; padding:0 4px }
-.sticky-actions{ position:sticky; top:8px; z-index:10; border:1px solid var(--ring); background:#fff; border-radius:var(--radius); padding:12px; box-shadow: var(--shadow); }
-.stButton>button{ border-radius:12px; padding:10px 16px; font-weight:800; border:1px solid var(--ring); background:#fff; color:#111827; transition:.16s ease; box-shadow: var(--shadow-sm); }
+
+.sticky-actions{
+  position:sticky; top:8px; z-index:10;
+  border:1px solid var(--ring); background:#fff; border-radius:var(--radius);
+  padding:12px; box-shadow: var(--shadow);
+}
+
+.stButton>button{
+  border-radius:12px; padding:10px 16px; font-weight:800;
+  border:1px solid var(--ring); background:#fff; color:#111827;
+  transition:.16s ease; box-shadow: var(--shadow-sm);
+}
 .stButton>button:hover{ transform:translateY(-1px); box-shadow: var(--shadow); }
 button[kind="primary"]{ background: var(--primary) !important; color:#fff !important; border-color: transparent !important; }
 button.danger{ background: var(--danger) !important; color:#fff !important; border-color: transparent !important; }
 button.warn{ background: var(--warn) !important; color:#111827 !important; border-color: transparent !important; }
+
 .small{ font-size:12px; color:var(--muted) }
+
 .table-card .stDataFrame{ border-radius:12px; overflow:hidden; box-shadow: var(--shadow-sm); }
-.codechip{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace; background:#111827; color:#fff; padding:2px 8px; border-radius:8px; font-size:12px; }
+
+.codechip{ font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono","Courier New", monospace;
+  background:#111827; color:#fff; padding:2px 8px; border-radius:8px; font-size:12px; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -503,10 +630,10 @@ def _stage_block(stage: str, tr: pd.Series, current_stage: str) -> str:
     decided  = str(tr.get(meta["decision_at"], "")) or "-"
     cls = _pill_class(status)
     state = "active" if current_stage == stage else ("done" if status.lower() in ["approved","rejected"] else "")
-    icon = {"SDA":"🧮","Data Guild":"📊","DigitalGuild":"💻","ETIDM":"🧪"}.get(stage,"🧩")
+    icon = {"SDA":"🧮","DataGuild":"📊","DigitalGuild":"💻","ETIDM":"🧪"}.get(stage,"🧩")
     return f"""
       <div class="step {state}">
-        <div class="title">{icon} {stage}</div>
+        <div class="title">{icon} {LABELS.get(stage, stage)}</div>
         <div class="meta">Status: <span class="pill {cls}">{status}</span></div>
         <div class="row"><div class="lbl">Assigned</div><div class="val">{assigned}</div></div>
         <div class="row"><div class="lbl">Decided</div><div class="val">{decided}</div></div>
@@ -554,7 +681,10 @@ if s_row.empty and t_row.empty:
     st.error(f"Sanction `{sid}` not found."); st.stop()
 
 current_stage = str(t_row.get("Current Stage", s_row.get("Current Stage", "SDA")))
-if current_stage not in STAGES: current_stage = "SDA"
+if current_stage not in STAGES:  # harden against legacy values like "Data Guild"
+    # Try normalizing
+    mapping = {"Data Guild":"DataGuild", "Digital Guild":"DigitalGuild"}
+    current_stage = mapping.get(current_stage, "SDA")
 
 # =========================
 # HEADER
@@ -566,7 +696,7 @@ st.markdown(f"""
     <h1 style="margin:.2rem 0 .2rem">{s_row.get('Project Name','Untitled')}</h1>
     <div class="small">Sanction <span class="codechip">{sid}</span></div>
   </div>
-  <div class="badge primary"><i>Stage</i> {current_stage}</div>
+  <div class="badge primary"><i>Stage</i> {LABELS[current_stage]}</div>
 </div>
 """, unsafe_allow_html=True)
 
@@ -589,7 +719,7 @@ for i,(label,val,badge) in enumerate(kpis, start=1):
     st.markdown(
         f'<div class="kpi card col-3"><div class="label">{label}</div>'
         f'<div class="value">{val}</div>'
-        f'{"<div class=\\"badge "+badge+"\\">"+overall+"</div>" if badge else ""}</div>', 
+        f'{"<div class=\\"badge "+badge+"\\">"+overall+"</div>" if badge else ""}</div>',
         unsafe_allow_html=True
     )
 
@@ -608,7 +738,7 @@ for i,(label,val) in enumerate(kpis2, start=1):
     st.markdown(
         f'<div class="kpi card col-3"><div class="label">{label}</div>'
         f'<div class="value">{val}</div>'
-        f'{"<div class=\\"badge "+pill+"\\">"+val+"</div>" if pill else ""}</div>', 
+        f'{"<div class=\\"badge "+pill+"\\">"+val+"</div>" if pill else ""}</div>',
         unsafe_allow_html=True
     )
 st.markdown('</div>', unsafe_allow_html=True)
@@ -642,7 +772,7 @@ with left:
         "Status": s_row.get("Status", t_row.get("Overall_status", "-")),
         "Directorate": s_row.get("Directorate", "-"),
         "Amount": amount,
-        "Current Stage": current_stage,
+        "Current Stage": LABELS[current_stage],
         "Submitted": s_row.get("Submitted", t_row.get("Submitted_at","-")),
         "Title": t_row.get("Title", "-"),
         "Currency": t_row.get("Currency", "GBP"),
@@ -670,7 +800,7 @@ st.divider()
 # =========================
 # STAGE ACTIONS — Sticky Action Bar
 # =========================
-st.subheader(f"Stage Actions — {current_stage}")
+st.subheader(f"Stage Actions — {LABELS[current_stage]}")
 if current_stage not in STAGE_KEYS:
     st.info("This stage has no configured actions.")
 else:
@@ -688,7 +818,7 @@ else:
         role_can_act = True
 
         if not role_can_act:
-            st.warning(f"Your role ({role}) cannot act on {current_stage}.")
+            st.warning(f"Your role ({role}) cannot act on {LABELS[current_stage]}.")
         else:
             with st.form(f"form_{current_stage}"):
                 colA, colB, colC = st.columns([1.2, 1, 1])
@@ -724,20 +854,17 @@ else:
                 nxt = _next_stage(current_stage) if new_status == "Approved" else None
                 if new_status == "Approved" and nxt:
                     # Move to the next stage's INTAKE:
-                    # - Current Stage is set to next team (so that team's Intake query will pick it)
-                    # - All in_* flags are cleared (so it doesn't appear in any Pending)
-                    tracker_df.loc[mask, "Current Stage"] = nxt
+                    tracker_df.loc[mask, "Current Stage"] = nxt                # next team
                     tracker_df.loc[mask, "Overall_status"] = "In progress"
-                    for stg, m in STAGE_KEYS.items():
+                    for stg, m in STAGE_KEYS.items():                          # clear all flags
                         tracker_df.loc[mask, m["flag"]] = False
                 elif new_status == "Rejected":
                     tracker_df.loc[mask, "Overall_status"] = "Rejected"
-                    # also clear flags so it leaves all Pending tables
                     for stg, m in STAGE_KEYS.items():
                         tracker_df.loc[mask, m["flag"]] = False
                 else:
                     tracker_df.loc[mask, "Overall_status"] = "Changes requested"
-                    # keep Current Stage as-is; clear flags so it returns to Intake for this stage if needed
+                    # keep current stage, but clear flags so it goes back to Intake of this stage
                     for stg, m in STAGE_KEYS.items():
                         tracker_df.loc[mask, m["flag"]] = False
 
@@ -759,7 +886,7 @@ else:
                     except Exception as e:
                         st.warning(f"Could not update `{SANCTIONS_PATH}`: {e}")
 
-                    st.success(f"Saved decision for {sid} at {current_stage}: **{new_status}**")
+                    st.success(f"Saved decision for {sid} at {LABELS[current_stage]}: **{new_status}**")
                     st.toast("Updated ✅")
                     st.rerun()
 
