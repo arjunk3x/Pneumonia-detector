@@ -27,3 +27,21 @@ awaiting_df = con.execute(
       AND COALESCE(next_status_txt, 'Pending') = 'Pending'
     """
 ).df()
+
+
+
+awaiting_df = con.execute(
+    f"""
+    SELECT *
+    FROM approval
+    WHERE {vf}
+      AND CAST({status_col} AS VARCHAR) = 'Approved'
+      AND TRY_CAST({decision_col} AS TIMESTAMP) IS NOT NULL
+      -- was: AND {nr_is_in} = 1
+      AND CASE
+            WHEN LOWER(CAST({nr_is_in} AS VARCHAR)) IN ('1','true','t','yes','y') THEN TRUE
+            ELSE FALSE
+          END = TRUE
+      AND COALESCE(CAST({nr_status} AS VARCHAR), 'Pending') = 'Pending'
+    """
+).df()
