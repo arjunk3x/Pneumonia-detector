@@ -9,7 +9,7 @@ from pathlib import Path
 # =========================
 st.set_page_config(page_title="Sanction Approver Dashboard", layout="wide")
 
-CSV_PATH = Path("approval_tracker_dummy.csv")  # mock DB
+CSV_PATH = Path("approval_tracker_dummy.csv")  # mock DB file
 
 # =========================
 # Session / Current user & role
@@ -93,7 +93,7 @@ def next_role(role: str):
     i = ROLE_FLOW.index(role)
     return ROLE_FLOW[i+1] if i < len(ROLE_FLOW)-1 else None
 
-# ---- NEW: robust booleanizer for any is_in_* column (works with 1/0, true/false, yes/no)
+# ---- robust booleanizer for any is_in_* column (works with 1/0, true/false, yes/no, strings)
 def flag_true_sql(col_name: str) -> str:
     return f"""
     CASE
@@ -104,15 +104,25 @@ def flag_true_sql(col_name: str) -> str:
     """
 
 def visibility_filter_for(role: str) -> str:
-    """WHERE clause fragment enforcing visibility by stage (type-safe)."""
-    is_in_col, status_col, _, _ = stage_cols(role)
+    """
+    Type-safe visibility rule for each role:
+      - SDA: items currently in SDA
+      - Other roles: items where previous stage is Approved (and decided),
+        AND the current stage flag is true (i.e., routed to this team)
+    """
+    is_in_col, status_col, _, decision_col = stage_cols(role)
+
     if role == "SDA":
-        # was: f"{is_in_col} = 1"
         return f"{flag_true_sql(is_in_col)} = TRUE"
+
     p = prev_role(role)
-    p_is_in, p_status, _, _ = stage_cols(p)
-    # was: f"{p_status} = 'Approved' AND {is_in_col} = 1"
-    return f"CAST({p_status} AS VARCHAR) = 'Approved' AND {flag_true_sql(is_in_col)} = TRUE"
+    p_is_in, p_status, _, p_decision_at = stage_cols(p)
+
+    return (
+        f"CAST({p_status} AS VARCHAR) = 'Approved' "
+        f"AND TRY_CAST({p_decision_at} AS TIMESTAMP) IS NOT NULL "
+        f"AND {flag_true_sql(is_in_col)} = TRUE"
+    )
 
 # =========================
 # UI bits: Title & KPI card
@@ -288,9 +298,7 @@ display_df = pd.DataFrame({
     "Risk Level": risk_txt.map(risk_badge),
 })
 
-# ---- REMOVE LinkColumn (caused full reload & login loss)
-# display_df["View"] = display_df["Sanction_ID"].apply(lambda sid: f"./Feedback?sanction_id={sid}").astype(str)
-
+# ---- No LinkColumn; we'll use in-app buttons to keep session
 colA, colB, colC = st.columns(3)
 with colA:
     search_id = st.text_input("Search by Sanction_ID")
@@ -352,7 +360,7 @@ if current_role == "SDA":
         backlog_df = con.execute("""
             SELECT *
             FROM approval
-            WHERE CAST(is_submitter AS INTEGER) = 1
+            WHERE TRY_CAST(is_submitter AS BIGINT) = 1
               AND ( {flag} = FALSE OR {flag} IS NULL )
         """.format(flag=flag_true_sql("is_in_SDA"))).df()
 
@@ -378,4 +386,5 @@ if current_role == "SDA":
                     st.success(f"Moved {len(intake_ids)} to SDA")
                     st.rerun()
 
+# (Optional) footer / helper info
 st.caption(f"Logged in as: **{current_user}** ({current_role})")
