@@ -1,52 +1,35 @@
-# ==============================
-# Sidebar — role-aware Teams (hide others)
-# ==============================
+# ========================
+# Flow / Stage helpers
+# ========================
 ROLE_FLOW = ["SDA", "DataGuild", "DigitalGuild", "ETIDM"]
-ROLE_LABEL = {
-    "SDA": "SDA",
-    "DataGuild": "Data Guild",
-    "DigitalGuild": "Digital Guild",
-    "ETIDM": "ETIDM",
-}
 
-# Make sure session has a role
-if "user_role" not in st.session_state:
-    st.session_state["user_role"] = "SDA"
-if "user_email" not in st.session_state:
-    st.session_state["user_email"] = "sda@company.com"
+def role_display_name(role: str) -> str:
+    return {
+        "SDA": "SDA",
+        "DataGuild": "Data Guild",
+        "DigitalGuild": "Digital Guild",
+        "ETIDM": "ETIDM",
+    }.get(role, role)
 
-with st.sidebar:
-    st.markdown("### 👤 Active User")
-    st.markdown(f"**{st.session_state['user_email']}**")
 
-    st.markdown("### 🧩 Teams")
+# ========================
+# Sidebar role switcher (locked to user's role)
+# ========================
+# use whatever role was set in session (e.g., during login/bootstrap)
+current_role = st.session_state.get("user_role", "SDA")
 
-    # Admin can switch; everyone else sees only their team
-    is_admin = st.session_state["user_email"] == "admin@company.com"
+# safety check: if unknown, fall back to SDA
+if current_role not in ROLE_FLOW:
+    current_role = "SDA"
 
-    if is_admin:
-        # Admin can change role from the dropdown
-        picked_role = st.selectbox(
-            "Team",
-            ROLE_FLOW,
-            index=ROLE_FLOW.index(st.session_state["user_role"]),
-            format_func=lambda r: ROLE_LABEL[r],
-            key="sb_team_select",
-        )
-        if picked_role != st.session_state["user_role"]:
-            st.session_state["user_role"] = picked_role
-            st.cache_data.clear()
-            st.rerun()
-    else:
-        # Non-admin: show locked team badge (no selectbox)
-        locked_label = ROLE_LABEL[st.session_state["user_role"]]
-        st.markdown(
-            f"<div style='padding:8px 12px;background:#f5f6ff;"
-            f"border:1px solid #e5e7eb;border-radius:10px;"
-            f"font-weight:700;'>🔒 Team: {locked_label}</div>",
-            unsafe_allow_html=True,
-        )
-        st.caption("You can only view and manage data for your assigned team.")
+# show only the logged-in role, with switching disabled
+st.sidebar.selectbox(
+    "Team",
+    [current_role],                  # single allowed option
+    index=0,
+    format_func=role_display_name,
+    disabled=True                    # prevent manual change
+)
 
-# Use this everywhere below
-current_role = st.session_state["user_role"]
+# persist for rest of page logic
+st.session_state["user_role"] = current_role
