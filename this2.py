@@ -1,18 +1,18 @@
 # ==========================================================
-# SanctionApproverDashboard.py  (role-aware version)
+# SanctionApproverDashboard.py  — role-aware (login-driven)
 # ==========================================================
 import streamlit as st
 import pandas as pd
 import numpy as np
-# (Keep your other imports exactly as they were, e.g., plotly, snowflake, etc.)
+# (keep your other imports: plotly, db libs, etc.)
 
 # ==========================================================
-# ROLE MANAGEMENT & SIDEBAR LOCK
+# ROLE CONSTANTS
 # ==========================================================
-# Internal role codes (no spaces)
+# Internal role codes (no spaces) used in logic:
 ROLE_FLOW = ["SDA", "DataGuild", "DigitalGuild", "ETIDM"]
 
-# Display names with spaces for sidebar readability
+# Pretty names for UI (sidebar):
 DISPLAY_NAME = {
     "SDA": "SDA",
     "DataGuild": "Data Guild",
@@ -20,86 +20,122 @@ DISPLAY_NAME = {
     "ETIDM": "ETIDM",
 }
 
-# Map user email → internal role
+# Optional: email → role mapping
+# If your login sets st.session_state["user_email"], you can map it here.
+# Leave empty if your login already sets user_role/team/groups.
 EMAIL_TO_ROLE = {
-    "sda@company.com": "SDA",
-    "dg@company.com": "DataGuild",
-    "dig@company.com": "DigitalGuild",
-    "etidm@company.com": "ETIDM",
+    # "sda@company.com": "SDA",
+    # "dg@company.com": "DataGuild",
+    # "dig@company.com": "DigitalGuild",
+    # "etidm@company.com": "ETIDM",
 }
 
 
-def _get_query_params_role() -> str | None:
-    """Optionally allow ?role=DataGuild in URL for testing."""
-    role = None
-    try:
-        qp = st.query_params  # Streamlit ≥1.31
-        val = qp.get("role", None)
-        if isinstance(val, list):
-            role = val[0]
-        else:
-            role = val
-    except Exception:
-        try:
-            qp = st.experimental_get_query_params()  # Streamlit <1.31
-            role = qp.get("role", [None])[0]
-        except Exception:
-            role = None
-
-    # Normalize names like "Data Guild" → "DataGuild"
-    if role in ("Data Guild", "Digital Guild"):
-        role = role.replace(" ", "")
-
-    return role if role in ROLE_FLOW else None
+# ==========================================================
+# HELPERS
+# ==========================================================
+def _normalize_role(value: str | None) -> str | None:
+    """Normalize various inputs to internal role codes, case-insensitive."""
+    if not value:
+        return None
+    v = str(value).strip()
+    # Accept common variants and spaces
+    aliases = {
+        "sda": "SDA",
+        "data guild": "DataGuild",
+        "dataguild": "DataGuild",
+        "digital guild": "DigitalGuild",
+        "digitalguild": "DigitalGuild",
+        "etidm": "ETIDM",
+    }
+    key = v.lower().replace("_", " ").replace("-", " ")
+    return aliases.get(key, v if v in ROLE_FLOW else None)
 
 
-def _bootstrap_user_role():
+def _first_nonempty(*vals):
+    for v in vals:
+        if v:
+            return v
+    return None
+
+
+def _coerce_groups_to_list(groups_val):
+    """Support groups as list or comma-separated string."""
+    if groups_val is None:
+        return []
+    if isinstance(groups_val, (list, tuple, set)):
+        return [str(x) for x in groups_val]
+    return [g.strip() for g in str(groups_val).split(",") if g.strip()]
+
+
+def _bootstrap_user_role_from_login():
     """
-    Ensures st.session_state['user_role'] is set exactly once.
+    Determine user_role strictly from what login provided.
     Priority:
-      1) URL param ?role=DataGuild (for testing)
-      2) st.session_state["user_email"] via EMAIL_TO_ROLE mapping
-      3) default fallback: "SDA"
+      1) st.session_state["user_role"]
+      2) st.session_state["team"]
+      3) st.session_state["groups"] (any group matching a known role)
+      4) EMAIL_TO_ROLE via st.session_state["user_email"]
+    If none found → show error and stop (do NOT silently default).
     """
-    if "user_role" in st.session_state and st.session_state["user_role"] in ROLE_FLOW:
+    # 1) Explicit role from login
+    explicit_role = _normalize_role(st.session_state.get("user_role"))
+    if explicit_role in ROLE_FLOW:
+        st.session_state["user_role"] = explicit_role
         return
 
-    # 1) Query param override (optional)
-    qp_role = _get_query_params_role()
-    if qp_role:
-        st.session_state["user_role"] = qp_role
+    # 2) Team from login (often a display string like "Data Guild")
+    team = _normalize_role(st.session_state.get("team"))
+    if team in ROLE_FLOW:
+        st.session_state["user_role"] = team
         return
 
-    # 2) Email mapping (normal login flow)
+    # 3) Group membership from login (look for any known role)
+    groups = _coerce_groups_to_list(st.session_state.get("groups"))
+    for g in groups:
+        g_norm = _normalize_role(g)
+        if g_norm in ROLE_FLOW:
+            st.session_state["user_role"] = g_norm
+            return
+
+    # 4) Email → role mapping (optional)
     email = st.session_state.get("user_email")
     if email:
-        mapped = EMAIL_TO_ROLE.get(email)
+        mapped = _normalize_role(EMAIL_TO_ROLE.get(email))
         if mapped in ROLE_FLOW:
             st.session_state["user_role"] = mapped
             return
 
-    # 3) Fallback to SDA (safe default)
-    st.session_state["user_role"] = "SDA"
+    # Nothing found — fail loudly so you can fix login wiring
+    st.error(
+        "No team/role detected from login. "
+        "Your auth must set one of: "
+        "`st.session_state['user_role']`, `['team']`, `['groups']`, or `['user_email']` (with mapping)."
+    )
+    st.stop()
 
 
-# Initialize user role once
-_bootstrap_user_role()
+# ==========================================================
+# BOOTSTRAP ROLE (DO NOT HARD-CODE ANY DEFAULT)
+# ==========================================================
+_bootstrap_user_role_from_login()
+current_role = st.session_state["user_role"]  # guaranteed set by now
 
-# Normalize current role value
-current_role = st.session_state["user_role"]
-if current_role not in ROLE_FLOW:
-    current_role = "SDA"
-    st.session_state["user_role"] = current_role
-
-# Locked sidebar select (displays nice names, prevents switching)
+# ==========================================================
+# SIDEBAR: Locked Team (display only)
+# ==========================================================
 st.sidebar.selectbox(
     "Team",
-    [current_role],
+    [current_role],  # show only the logged-in team
     index=0,
     format_func=lambda r: DISPLAY_NAME.get(r, r),
-    disabled=True,
+    disabled=True,   # can't switch teams manually
 )
 
-# Optional: show current email & role at bottom of sidebar
-st.sidebar.caption(f"Signed in as: {st.session_state.get('user_email', 'unknown')}")
+# Optional: show who is signed in (remove in prod if you like)
+signed_in = _first_nonempty(st.session_state.get("display_name"),
+                            st.session_state.get("user_name"),
+                            st.session_state.get("user_email"),
+                            "Unknown user")
+st.sidebar.caption(f"Signed in: {signed_in}")
 st.sidebar.caption(f"Role: {DISPLAY_NAME.get(current_role, current_role)}")
