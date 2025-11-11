@@ -186,3 +186,28 @@ def main():
 
 # Entrypoint
 main()
+
+
+
+# --------------------------
+# Pages dictionary
+# --------------------------
+pages_dict = {
+    "Overview": [
+        st.Page("app_pages/Home.py", title="Home", icon="🏠")
+    ],
+    "Roadmap": [
+        st.Page("app_pages/JiraRoadmap.py", title="Jira Visualisation", icon="🗺️")
+    ],
+    "Sanctions": [
+        st.Page("app_pages/SanctionBuilder.py", title="Builder", icon="🧱"),
+        st.Page("app_pages/SanctionVisualisation.py", title="Visualisation", icon="📊"),
+        st.Page("app_pages/SanctionListing.py", title="Listing", icon="📋"),
+    ],
+    "Sanction Approver Dashboard": [
+        st.Page("app_pages/SanctionApproverDashboard.py", title="Sanction Approver Dashboard", icon="🧾")
+    ],
+    "Feedback Page": [
+        st.Page("app_pages/Feedback_Page.py", title="Feedback Page", icon="💬")
+    ],
+}
