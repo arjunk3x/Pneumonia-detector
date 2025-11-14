@@ -1,57 +1,65 @@
 # ==========================
-# Actions: per-row "View"
+# Enhanced Pastel UI Styling
 # ==========================
 
-# Pastel + interactive styling just for this section
 st.markdown(
     """
     <style>
+
+    /* Bigger pastel action cards */
     .action-card {
-        background: #ffffff;
-        border-radius: 18px;
-        padding: 12px 16px;
-        margin-bottom: 10px;
-        border: 1px solid #e2e8f0;
-        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.04);
-        transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
+        background: #f4f7ff;   /* light pastel lavender-blue */
+        border-radius: 22px;
+        padding: 18px 22px;
+        margin-bottom: 14px;
+        border: 1px solid #dbe4ff;
+        box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
+        transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
     }
     .action-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.10);
-        border-color: #c4b5fd;
+        transform: translateY(-3px);
+        box-shadow: 0 12px 28px rgba(15, 23, 42, 0.15);
+        border-color: #c7d2fe;
     }
+
+    /* Title (bigger font for Sanction ID) */
     .action-title {
-        font-weight: 600;
-        color: #1f2937;
-        font-size: 0.95rem;
-        margin-bottom: 4px;
+        font-weight: 700;
+        color: #1e293b;
+        font-size: 1.10rem;   /* Bigger */
+        margin-bottom: 6px;
         display: flex;
         align-items: center;
-        gap: 6px;
+        gap: 8px;
     }
+
+    /* Stage pill */
     .action-pill-stage {
         background: #e0f2fe;
         color: #0369a1;
         border-radius: 999px;
-        padding: 2px 8px;
-        font-size: 0.7rem;
-        font-weight: 500;
+        padding: 4px 10px;
+        font-size: 0.78rem;
+        font-weight: 600;
     }
+
+    /* Metadata text (slightly larger) */
     .action-meta {
-        font-size: 0.85rem;
+        font-size: 0.95rem;
         color: #475569;
-        margin-top: 2px;
+        margin-top: 4px;
+        line-height: 1.4;
     }
+
+    /* Risk pill */
     .risk-pill {
+        padding: 4px 12px;
+        border-radius: 999px;
+        font-size: 0.80rem;
+        font-weight: 600;
         display: inline-flex;
         align-items: center;
-        padding: 2px 10px;
-        border-radius: 999px;
-        font-size: 0.75rem;
-        font-weight: 500;
-        background: #e0f2fe;
-        color: #0369a1;
-        gap: 4px;
+        gap: 6px;
     }
     .risk-low {
         background: #dcfce7;
@@ -65,36 +73,39 @@ st.markdown(
         background: #fee2e2;
         color: #b91c1c;
     }
+
+    /* Pastel button */
     .stButton > button {
-        background: linear-gradient(135deg, #a5b4fc, #bfdbfe);
-        color: #0f172a;
+        background: linear-gradient(135deg, #c7d2fe, #e0e7ff);
+        color: #1e293b;
         border-radius: 999px;
         border: none;
-        padding: 0.35rem 0.9rem;
-        font-size: 0.82rem;
+        padding: 0.45rem 1.0rem;
+        font-size: 0.90rem;
         font-weight: 600;
         box-shadow: 0 4px 10px rgba(148, 163, 184, 0.35);
-        transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.08s ease;
+        transition: transform 0.10s ease, box-shadow 0.10s ease;
     }
     .stButton > button:hover {
-        transform: translateY(-1px);
+        transform: translateY(-2px);
         box-shadow: 0 8px 18px rgba(148, 163, 184, 0.55);
-        filter: brightness(1.03);
     }
-    .stButton > button:active {
-        transform: translateY(0px) scale(0.99);
-        box-shadow: 0 3px 8px rgba(148, 163, 184, 0.45);
-    }
+
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.markdown("### Actions")
+# ==========================
+# Actions Section
+# ==========================
+
+st.markdown("## Actions")   # Made bigger
 
 for _, r in filtered_df.reset_index(drop=True).iterrows():
-    # Decide risk colour class
-    risk_value = str(r["Risk Level"]).strip().lower()
+    
+    # Dynamic risk color class
+    risk_value = str(r["Risk Level"]).lower()
     if "high" in risk_value or "red" in risk_value:
         risk_class = "risk-high"
     elif "med" in risk_value or "amber" in risk_value:
@@ -111,14 +122,15 @@ for _, r in filtered_df.reset_index(drop=True).iterrows():
             st.markdown(
                 f"""
                 <div class="action-title">
-                    ⚖️ Sanction ID: {r['Sanction_ID']}
+                    🗂️ Sanction ID: {r['Sanction_ID']}
                     <span class="action-pill-stage">Stage: {r['Stage']}</span>
                 </div>
+
                 <div class="action-meta">
-                    Status: {r['Status in Stage']} ·
-                    Value: {r['Value']} ·
+                    <b>Status:</b> {r['Status in Stage']}<br>
+                    <b>Value:</b> {r['Value']}<br>
                     <span class="risk-pill {risk_class}">
-                        <span>●</span> Risk: {r['Risk Level']}
+                        ● Risk: {r['Risk Level']}
                     </span>
                 </div>
                 """,
