@@ -1,5 +1,5 @@
 # ==========================
-# ACTIONS SECTION (FULL CODE)
+# ACTIONS SECTION (CLEAN + STYLISH)
 # ==========================
 
 import streamlit as st
@@ -8,38 +8,27 @@ import streamlit as st
 st.markdown(
     """
     <style>
-    /* Outer wrapper box for the whole Actions section */
-    .actions-wrapper {
-        border: 1px solid #d1d5db;  /* thin grey border */
-        border-radius: 16px;
-        padding: 22px;
-        background: #ffffff;
-        margin-top: 20px;
-        margin-bottom: 20px;
-        box-shadow: 0 4px 12px rgba(0,0,0,0.04);
-    }
-
     .actions-title {
         font-size: 1.5rem;
         font-weight: 700;
         color: #1f2937;
-        margin-bottom: 14px;
+        margin: 16px 0 10px 0;
     }
 
-    /* Pastel action cards */
+    /* Pastel action cards – thin grey border around each sanction */
     .action-card {
-        background: #f4f7ff;   /* pastel lavender-blue */
-        border-radius: 22px;
-        padding: 18px 22px;
-        margin-bottom: 14px;
-        border: 1px solid #dbe4ff;
-        box-shadow: 0 6px 16px rgba(15, 23, 42, 0.08);
-        transition: transform 0.15s ease, box-shadow 0.15s ease, border-color 0.15s ease;
+        background: #f8fafc;              /* very light grey/blue */
+        border-radius: 18px;
+        padding: 16px 20px;
+        margin-bottom: 12px;
+        border: 1px solid #d1d5db;        /* thin grey border */
+        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.04);
+        transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
     }
     .action-card:hover {
-        transform: translateY(-3px);
-        box-shadow: 0 12px 28px rgba(15, 23, 42, 0.15);
-        border-color: #c7d2fe;
+        transform: translateY(-2px);
+        box-shadow: 0 10px 22px rgba(15, 23, 42, 0.12);
+        border-color: #c7d2fe;           /* subtle pastel highlight */
     }
 
     /* Header row: title + stage + status chip */
@@ -52,7 +41,7 @@ st.markdown(
     .action-title {
         font-weight: 700;
         color: #1e293b;
-        font-size: 1.08rem;
+        font-size: 1.05rem;
         display: flex;
         align-items: center;
         gap: 8px;
@@ -64,7 +53,7 @@ st.markdown(
         background: #e0f2fe;
         color: #0369a1;
         border-radius: 999px;
-        padding: 4px 10px;
+        padding: 3px 9px;
         font-size: 0.78rem;
         font-weight: 600;
     }
@@ -72,7 +61,7 @@ st.markdown(
     /* Status chip */
     .status-pill {
         border-radius: 999px;
-        padding: 4px 12px;
+        padding: 4px 11px;
         font-size: 0.78rem;
         font-weight: 600;
     }
@@ -142,17 +131,13 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ==========================
-# ACTIONS CONTENT
-# ==========================
-
-# Wrap whole section inside thin grey box
-st.markdown('<div class="actions-wrapper">', unsafe_allow_html=True)
+# ---- TITLE ----
 st.markdown('<div class="actions-title">Actions</div>', unsafe_allow_html=True)
 
+# ---- CARDS ----
 for _, r in filtered_df.reset_index(drop=True).iterrows():
 
-    # --- risk colour class ---
+    # Risk colour class
     risk_value = str(r["Risk Level"]).lower()
     if "high" in risk_value or "red" in risk_value:
         risk_class = "risk-high"
@@ -161,7 +146,7 @@ for _, r in filtered_df.reset_index(drop=True).iterrows():
     else:
         risk_class = "risk-low"
 
-    # --- status colour class ---
+    # Status colour class
     status_value = str(r["Status in Stage"]).lower()
     if "approved" in status_value:
         status_class = "status-approved"
@@ -170,7 +155,6 @@ for _, r in filtered_df.reset_index(drop=True).iterrows():
     else:
         status_class = "status-pending"
 
-    # Card container
     st.markdown('<div class="action-card">', unsafe_allow_html=True)
 
     c1, c2 = st.columns([5, 1])
@@ -217,5 +201,3 @@ for _, r in filtered_df.reset_index(drop=True).iterrows():
             st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)  # close .action-card
-
-st.markdown("</div>", unsafe_allow_html=True)  # close .actions-wrapper
