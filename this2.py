@@ -1,190 +1,159 @@
 # ==========================
-# ACTIONS SECTION (POLISHED)
+# Pending table + View (PASTEL STYLING)
 # ==========================
 
 import streamlit as st
+import pandas as pd
 
+# ---------- Pastel CSS for this section ----------
 st.markdown(
     """
     <style>
-    .actions-title {
-        font-size: 1.4rem;
+    /* Section wrapper */
+    .pending-wrapper {
+        background: #f8fafc;                 /* very light blue/grey */
+        border-radius: 18px;
+        padding: 18px 20px;
+        border: 1px solid #e2e8f0;
+        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+        margin-bottom: 18px;
+    }
+
+    .section-title {
+        font-size: 1.35rem;
         font-weight: 700;
-        letter-spacing: 0.05em;
+        letter-spacing: 0.04em;
         color: #111827;
-        margin: 4px 0 4px 0;
+        margin-bottom: 4px;
         text-transform: uppercase;
     }
-    .actions-divider {
-        height: 1px;
-        background: linear-gradient(to right, #d1d5db, #e5e7eb, #ffffff);
-        margin-bottom: 10px;
+
+    .section-subtitle {
+        font-size: 0.9rem;
+        color: #6b7280;
+        margin-bottom: 12px;
     }
 
-    /* Pastel action cards */
-    .action-card {
-        background: #f8fafc;
-        border-radius: 18px;
-        padding: 14px 20px;
-        margin-bottom: 10px;
-        border: 1px solid #d1d5db;
-        box-shadow: 0 3px 8px rgba(15, 23, 42, 0.05);
-        transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
-    }
-    .action-card:hover {
-        transform: translateY(-1px);
-        box-shadow: 0 8px 18px rgba(15, 23, 42, 0.13);
-        border-color: #c7d2fe;
-    }
-
-    .action-header {
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
+    /* Filters row label styling (Streamlit text_inputs / multiselects sit next to this) */
+    .filter-help {
+        font-size: 0.82rem;
+        color: #9ca3af;
         margin-bottom: 6px;
     }
-    .action-title {
-        font-weight: 700;
-        color: #1e293b;
-        font-size: 1.0rem;
-        display: flex;
-        align-items: center;
-        gap: 8px;
-    }
-    .action-title-icon {
-        font-size: 1.05rem;
-    }
-    .action-pill-stage {
-        background: #e0f2fe;
-        color: #0369a1;
-        border-radius: 999px;
-        padding: 3px 9px;
-        font-size: 0.75rem;
-        font-weight: 600;
-    }
 
-    .status-pill {
-        border-radius: 999px;
-        padding: 4px 11px;
-        font-size: 0.78rem;
-        font-weight: 600;
+    /* Data editor/table pastel styling */
+    [data-testid="stDataFrame"], [data-testid="stDataEditor"] {
+        background-color: #f9fafb !important;
+        border-radius: 14px;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 2px 8px rgba(148, 163, 184, 0.2);
+        padding: 4px;
     }
-    .status-pending { background: #fef9c3; color: #854d0e; }
-    .status-approved { background: #dcfce7; color: #166534; }
-    .status-rejected { background: #fee2e2; color: #b91c1c; }
-
-    .detail-row {
-        display: flex;
-        flex-wrap: wrap;
-        gap: 8px;
-        margin-top: 2px;
+    [data-testid="stDataFrame"] table,
+    [data-testid="stDataEditor"] table {
+        color: #111827;
         font-size: 0.9rem;
-        color: #475569;
     }
 
-    .value-pill {
-        background: #fff7ed;
-        color: #9a3412;
-        border-radius: 999px;
-        padding: 3px 10px;
-        font-size: 0.8rem;
+    /* Optional: make column headers slightly bolder (depends on Streamlit version) */
+    [data-testid="stDataFrame"] thead tr th,
+    [data-testid="stDataEditor"] thead tr th {
         font-weight: 600;
-    }
-
-    .risk-pill {
-        border-radius: 999px;
-        padding: 3px 10px;
-        font-size: 0.8rem;
-        font-weight: 600;
-        display: inline-flex;
-        align-items: center;
-        gap: 6px;
-    }
-    .risk-low  { background: #dcfce7; color: #15803d; }
-    .risk-medium { background: #fef9c3; color: #a16207; }
-    .risk-high { background: #fee2e2; color: #b91c1c; }
-
-    .stButton > button {
-        background: linear-gradient(135deg, #c7d2fe, #e0e7ff);
-        color: #1e293b;
-        border-radius: 999px;
-        border: none;
-        padding: 0.45rem 1.0rem;
-        font-size: 0.90rem;
-        font-weight: 600;
-        box-shadow: 0 4px 10px rgba(148, 163, 184, 0.35);
-        transition: transform 0.10s ease, box-shadow 0.10s ease;
-    }
-    .stButton > button:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 8px 18px rgba(148, 163, 184, 0.55);
+        background: #e5e7eb;
     }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-st.markdown('<div class="actions-title">Actions</div>', unsafe_allow_html=True)
-st.markdown('<div class="actions-divider"></div>', unsafe_allow_html=True)
+# ---------- Section wrapper ----------
+with st.container():
+    st.markdown('<div class="pending-wrapper">', unsafe_allow_html=True)
 
-for _, r in filtered_df.reset_index(drop=True).iterrows():
-    risk_value = str(r["Risk Level"]).lower()
-    if "high" in risk_value or "red" in risk_value:
-        risk_class = "risk-high"
-    elif "med" in risk_value or "amber" in risk_value:
-        risk_class = "risk-medium"
-    else:
-        risk_class = "risk-low"
+    # Section title
+    st.markdown(
+        f"""
+        <div class="section-title">Pending in {current_role}</div>
+        <div class="section-subtitle">
+            Sanctions currently at your stage. Use the filters to focus on specific IDs, statuses, or stages.
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    status_value = str(r["Status in Stage"]).lower()
-    if "approved" in status_value:
-        status_class = "status-approved"
-    elif "reject" in status_value:
-        status_class = "status-rejected"
-    else:
-        status_class = "status-pending"
+    # ---------- Build display DF ----------
+    # risk_series from full df; default to "Medium"
+    risk_series = df.get("Risk Level", pd.Series(["Medium"] * len(df)))
 
-    st.markdown('<div class="action-card">', unsafe_allow_html=True)
+    risk_txt = (
+        pending_df.index.to_series()
+        .map(lambda i: risk_series.iloc[i] if i in risk_series.index else "Medium")
+        .fillna("Medium")
+        .astype(str)
+    )
 
-    c1, c2 = st.columns([5, 1])
+    def risk_badge(v: str) -> str:
+        s = str(v).strip().lower()
+        if s == "high":
+            return "🔴 High"
+        if s == "low":
+            return "🟢 Low"
+        return "🟠 Medium"
 
-    with c1:
-        st.markdown(
-            f"""
-            <div class="action-header">
-                <div class="action-title">
-                    <span class="action-title-icon">📁</span>
-                    <span>Sanction ID: {r['Sanction_ID']}</span>
-                    <span class="action-pill-stage">Stage: {r['Stage']}</span>
-                </div>
-                <div class="status-pill {status_class}">
-                    {r['Status in Stage']}
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
+    display_df = pd.DataFrame(
+        {
+            "Sanction_ID": pending_df["Sanction_ID"].astype(str),
+            "Value": pending_df["Value"],
+            "Stage": current_role,
+            "Status in Stage": pending_df[status_col].fillna("Pending").astype(str),
+            "Risk Level": risk_txt.map(risk_badge),
+        }
+    )
+
+    # ---------- Filters (search, status, stage) ----------
+    st.markdown('<div class="filter-help">Filters</div>', unsafe_allow_html=True)
+
+    colA, colB, colC = st.columns(3)
+
+    with colA:
+        search_id = st.text_input("Search by Sanction_ID", "")
+    with colB:
+        selected_status = st.multiselect(
+            "Filter by Status",
+            options=sorted(display_df["Status in Stage"].dropna().unique()),
+        )
+    with colC:
+        selected_stage = st.multiselect(
+            "Filter by Stage",
+            options=sorted(display_df["Stage"].dropna().unique()),
+            default=[current_role] if current_role in display_df["Stage"].unique() else [],
         )
 
-        st.markdown(
-            f"""
-            <div class="detail-row">
-                <div>
-                    <span class="value-pill">£ {r['Value']}</span>
-                </div>
-                <div>
-                    <span class="risk-pill {risk_class}">
-                        ● {r['Risk Level']}
-                    </span>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+    filtered_df = display_df.copy()
+    if search_id:
+        filtered_df = filtered_df[
+            filtered_df["Sanction_ID"].str.contains(search_id, case=False)
+        ]
+    if selected_status:
+        filtered_df = filtered_df[
+            filtered_df["Status in Stage"].isin(selected_status)
+        ]
+    if selected_stage:
+        filtered_df = filtered_df[filtered_df["Stage"].isin(selected_stage)]
 
-    with c2:
-        if st.button("View →", key=f"view_{r['Sanction_ID']}"):
-            st.session_state["selected_sanction_id"] = str(r["Sanction_ID"])
-            st.session_state.navigate_to_feedback = True
-            st.rerun()
+    # ---------- Pastel data editor ----------
+    st.data_editor(
+        filtered_df[["Sanction_ID", "Value", "Stage", "Status in Stage", "Risk Level"]],
+        hide_index=True,
+        disabled=True,
+        use_container_width=True,
+        column_config={
+            "Sanction_ID": st.column_config.TextColumn("Sanction ID"),
+            "Value": st.column_config.NumberColumn("Value"),
+            "Stage": st.column_config.TextColumn("Stage"),
+            "Status in Stage": st.column_config.TextColumn("Status in Stage"),
+            "Risk Level": st.column_config.TextColumn("Risk Level"),
+        },
+    )
 
-    st.markdown("</div>", unsafe_allow_html=True)
+    st.markdown("</div>", unsafe_allow_html=True)  # close pending-wrapper
