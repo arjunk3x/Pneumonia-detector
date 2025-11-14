@@ -1,29 +1,25 @@
-# ==========================
-# Pending table + View (PASTEL STYLING)
-# ==========================
-
-import streamlit as st
-import pandas as pd
-
-# ---------- Pastel CSS for this section ----------
+# ----------- PASTEL UI CSS (wrapper + filters + table headers) -----------
 st.markdown(
     """
     <style>
-    /* Section wrapper */
+
+    /* ------------------------------
+        SECTION WRAPPER
+    ------------------------------*/
     .pending-wrapper {
-        background: #f8fafc;                 /* very light blue/grey */
+        background: #f8fafc;
         border-radius: 18px;
-        padding: 18px 20px;
+        padding: 20px 22px;
         border: 1px solid #e2e8f0;
         box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
-        margin-bottom: 18px;
+        margin-bottom: 20px;
     }
 
     .section-title {
         font-size: 1.35rem;
         font-weight: 700;
         letter-spacing: 0.04em;
-        color: #111827;
+        color: #0f172a;
         margin-bottom: 4px;
         text-transform: uppercase;
     }
@@ -31,57 +27,97 @@ st.markdown(
     .section-subtitle {
         font-size: 0.9rem;
         color: #6b7280;
-        margin-bottom: 12px;
+        margin-bottom: 18px;
     }
 
-    /* Filters row label styling (Streamlit text_inputs / multiselects sit next to this) */
+
+    /* ------------------------------
+        FILTERS – Pastel input boxes
+    ------------------------------*/
+    .filter-container {
+        background: #eef2ff;      /* soft pastel lavender */
+        padding: 14px 16px;
+        border-radius: 14px;
+        border: 1px solid #e0e7ff;
+        box-shadow: 0 3px 8px rgba(99, 102, 241, 0.12);
+        margin-bottom: 16px;
+    }
+
     .filter-help {
         font-size: 0.82rem;
-        color: #9ca3af;
-        margin-bottom: 6px;
+        font-weight: 600;
+        color: #6366f1;
+        margin-bottom: 10px;
+        letter-spacing: 0.02em;
     }
 
-    /* Data editor/table pastel styling */
-    [data-testid="stDataFrame"], [data-testid="stDataEditor"] {
-        background-color: #f9fafb !important;
-        border-radius: 14px;
-        border: 1px solid #e5e7eb;
-        box-shadow: 0 2px 8px rgba(148, 163, 184, 0.2);
-        padding: 4px;
-    }
-    [data-testid="stDataFrame"] table,
-    [data-testid="stDataEditor"] table {
-        color: #111827;
-        font-size: 0.9rem;
+    /* Style text inputs / multiselects */
+    .stTextInput > div > div > input,
+    .stMultiSelect div[data-baseweb="select"] > div {
+        background-color: #ffffff !important;
+        border-radius: 10px !important;
+        border: 1px solid #d4d4ff !important;
+        box-shadow: inset 0 1px 3px rgba(99, 102, 241, 0.15);
     }
 
-    /* Optional: make column headers slightly bolder (depends on Streamlit version) */
+    .stTextInput > div > div > input:hover,
+    .stMultiSelect div[data-baseweb="select"] > div:hover {
+        border: 1px solid #a5b4fc !important;
+        box-shadow: 0 0 0 3px rgba(165, 180, 252, 0.35);
+    }
+
+    /* Widget labels */
+    label[data-testid="stWidgetLabel"] > div {
+        font-weight: 600;
+        color: #4338ca !important;
+    }
+
+
+    /* ------------------------------
+        DATA TABLE HEADER STYLING
+    ------------------------------*/
     [data-testid="stDataFrame"] thead tr th,
     [data-testid="stDataEditor"] thead tr th {
-        font-weight: 600;
-        background: #e5e7eb;
+        background: #e0f2fe !important;             /* pastel sky blue */
+        color: #0c4a6e !important;
+        font-weight: 700 !important;
+        border-bottom: 2px solid #bae6fd !important;
+        font-size: 0.92rem !important;
+        padding-top: 8px !important;
+        padding-bottom: 8px !important;
+        border-radius: 6px !important;
     }
+
+    /* Table container */
+    [data-testid="stDataFrame"], [data-testid="stDataEditor"] {
+        background-color: #f0f9ff !important;
+        border-radius: 14px;
+        border: 1px solid #bae6fd;
+        box-shadow: 0 3px 10px rgba(56, 189, 248, 0.25);
+        padding: 6px;
+    }
+
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# ---------- Section wrapper ----------
+# ---------- SECTION WRAPPER ----------
 with st.container():
     st.markdown('<div class="pending-wrapper">', unsafe_allow_html=True)
 
-    # Section title
+    # Title + subtitle
     st.markdown(
         f"""
         <div class="section-title">Pending in {current_role}</div>
         <div class="section-subtitle">
-            Sanctions currently at your stage. Use the filters to focus on specific IDs, statuses, or stages.
+            Sanctions currently at your stage. Use the filters below to focus on specific IDs, statuses, or stages.
         </div>
         """,
         unsafe_allow_html=True,
     )
 
-    # ---------- Build display DF ----------
+    # ---------- BUILD DISPLAY DF ----------
     # risk_series from full df; default to "Medium"
     risk_series = df.get("Risk Level", pd.Series(["Medium"] * len(df)))
 
@@ -110,18 +146,21 @@ with st.container():
         }
     )
 
-    # ---------- Filters (search, status, stage) ----------
-    st.markdown('<div class="filter-help">Filters</div>', unsafe_allow_html=True)
+    # ---------- FILTERS (inside pastel container) ----------
+    st.markdown('<div class="filter-container">', unsafe_allow_html=True)
+    st.markdown('<div class="filter-help">FILTERS</div>', unsafe_allow_html=True)
 
     colA, colB, colC = st.columns(3)
 
     with colA:
         search_id = st.text_input("Search by Sanction_ID", "")
+
     with colB:
         selected_status = st.multiselect(
             "Filter by Status",
             options=sorted(display_df["Status in Stage"].dropna().unique()),
         )
+
     with colC:
         selected_stage = st.multiselect(
             "Filter by Stage",
@@ -129,6 +168,9 @@ with st.container():
             default=[current_role] if current_role in display_df["Stage"].unique() else [],
         )
 
+    st.markdown("</div>", unsafe_allow_html=True)  # close filter-container
+
+    # ---------- APPLY FILTERS ----------
     filtered_df = display_df.copy()
     if search_id:
         filtered_df = filtered_df[
@@ -141,7 +183,7 @@ with st.container():
     if selected_stage:
         filtered_df = filtered_df[filtered_df["Stage"].isin(selected_stage)]
 
-    # ---------- Pastel data editor ----------
+    # ---------- PASTEL DATA EDITOR ----------
     st.data_editor(
         filtered_df[["Sanction_ID", "Value", "Stage", "Status in Stage", "Risk Level"]],
         hide_index=True,
