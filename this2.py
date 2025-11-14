@@ -1,59 +1,89 @@
 # ==========================
-# Actions: Clean Pastel Table UI
+# Actions: per-row "View"
 # ==========================
 
-# Styling for a boxed pastel table look
+# Pastel + interactive styling just for this section
 st.markdown(
     """
     <style>
-    .actions-table {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        margin-top: 8px;
-    }
-    .action-row {
+    .action-card {
         background: #ffffff;
+        border-radius: 18px;
+        padding: 12px 16px;
+        margin-bottom: 10px;
         border: 1px solid #e2e8f0;
-        border-radius: 12px;
-        padding: 14px 18px;
-        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.03);
-        display: grid;
-        grid-template-columns: 2fr 1fr 1fr 1fr auto;
-        align-items: center;
-        gap: 12px;
+        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.04);
+        transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
     }
-    .action-header {
+    .action-card:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 10px 24px rgba(15, 23, 42, 0.10);
+        border-color: #c4b5fd;
+    }
+    .action-title {
         font-weight: 600;
-        color: #1e293b;
-        padding: 6px 0;
-        font-size: 0.9rem;
-        border-bottom: 1px solid #e2e8f0;
-        margin-bottom: 6px;
+        color: #1f2937;
+        font-size: 0.95rem;
+        margin-bottom: 4px;
+        display: flex;
+        align-items: center;
+        gap: 6px;
     }
-    .action-cell {
-        color: #475569;
-        font-size: 0.85rem;
-    }
-    .risk-pill {
-        padding: 3px 12px;
+    .action-pill-stage {
         background: #e0f2fe;
         color: #0369a1;
         border-radius: 999px;
+        padding: 2px 8px;
+        font-size: 0.7rem;
+        font-weight: 500;
+    }
+    .action-meta {
+        font-size: 0.85rem;
+        color: #475569;
+        margin-top: 2px;
+    }
+    .risk-pill {
+        display: inline-flex;
+        align-items: center;
+        padding: 2px 10px;
+        border-radius: 999px;
         font-size: 0.75rem;
         font-weight: 500;
+        background: #e0f2fe;
+        color: #0369a1;
+        gap: 4px;
+    }
+    .risk-low {
+        background: #dcfce7;
+        color: #15803d;
+    }
+    .risk-medium {
+        background: #fef9c3;
+        color: #a16207;
+    }
+    .risk-high {
+        background: #fee2e2;
+        color: #b91c1c;
     }
     .stButton > button {
         background: linear-gradient(135deg, #a5b4fc, #bfdbfe);
-        color: #0f172a !important;
+        color: #0f172a;
         border-radius: 999px;
         border: none;
-        padding: 0.3rem 0.8rem;
-        font-size: 0.8rem;
+        padding: 0.35rem 0.9rem;
+        font-size: 0.82rem;
         font-weight: 600;
+        box-shadow: 0 4px 10px rgba(148, 163, 184, 0.35);
+        transition: transform 0.08s ease, box-shadow 0.08s ease, filter 0.08s ease;
     }
     .stButton > button:hover {
-        background: linear-gradient(135deg, #93c5fd, #c4b5fd);
+        transform: translateY(-1px);
+        box-shadow: 0 8px 18px rgba(148, 163, 184, 0.55);
+        filter: brightness(1.03);
+    }
+    .stButton > button:active {
+        transform: translateY(0px) scale(0.99);
+        box-shadow: 0 3px 8px rgba(148, 163, 184, 0.45);
     }
     </style>
     """,
@@ -62,42 +92,43 @@ st.markdown(
 
 st.markdown("### Actions")
 
-# Header row (mimics table header)
-st.markdown(
-    """
-    <div class="action-row action-header">
-        <div>Sanction ID</div>
-        <div>Stage</div>
-        <div>Status</div>
-        <div>Value</div>
-        <div>Risk</div>
-        <div></div>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-# Table body container
-st.markdown('<div class="actions-table">', unsafe_allow_html=True)
-
-# Actual rows from dataframe
 for _, r in filtered_df.reset_index(drop=True).iterrows():
-    # Row container
-    st.markdown('<div class="action-row">', unsafe_allow_html=True)
+    # Decide risk colour class
+    risk_value = str(r["Risk Level"]).strip().lower()
+    if "high" in risk_value or "red" in risk_value:
+        risk_class = "risk-high"
+    elif "med" in risk_value or "amber" in risk_value:
+        risk_class = "risk-medium"
+    else:
+        risk_class = "risk-low"
 
-    # Table-like cells
-    st.markdown(f'<div class="action-cell">{r["Sanction_ID"]}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="action-cell">{r["Stage"]}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="action-cell">{r["Status in Stage"]}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="action-cell">{r["Value"]}</div>', unsafe_allow_html=True)
-    st.markdown(f'<div class="risk-pill">{r["Risk Level"]}</div>', unsafe_allow_html=True)
+    with st.container():
+        st.markdown('<div class="action-card">', unsafe_allow_html=True)
 
-    # Button cell
-    if st.button("View →", key=f"view_{r['Sanction_ID']}"):
-        st.session_state["selected_sanction_id"] = str(r["Sanction_ID"])
-        st.session_state.navigate_to_feedback = True
-        st.rerun()
+        c1, c2 = st.columns([5, 1])
 
-    st.markdown("</div>", unsafe_allow_html=True)
+        with c1:
+            st.markdown(
+                f"""
+                <div class="action-title">
+                    ⚖️ Sanction ID: {r['Sanction_ID']}
+                    <span class="action-pill-stage">Stage: {r['Stage']}</span>
+                </div>
+                <div class="action-meta">
+                    Status: {r['Status in Stage']} ·
+                    Value: {r['Value']} ·
+                    <span class="risk-pill {risk_class}">
+                        <span>●</span> Risk: {r['Risk Level']}
+                    </span>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
 
-st.markdown("</div>", unsafe_allow_html=True)
+        with c2:
+            if st.button("View →", key=f"view_{r['Sanction_ID']}"):
+                st.session_state["selected_sanction_id"] = str(r["Sanction_ID"])
+                st.session_state.navigate_to_feedback = True
+                st.rerun()
+
+        st.markdown("</div>", unsafe_allow_html=True)
