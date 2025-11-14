@@ -1,37 +1,42 @@
 # ==========================
-# ACTIONS SECTION (CLEAN + STYLISH)
+# ACTIONS SECTION (POLISHED)
 # ==========================
 
 import streamlit as st
 
-# ---- STYLES ----
 st.markdown(
     """
     <style>
     .actions-title {
-        font-size: 1.5rem;
+        font-size: 1.4rem;
         font-weight: 700;
-        color: #1f2937;
-        margin: 16px 0 10px 0;
+        letter-spacing: 0.05em;
+        color: #111827;
+        margin: 4px 0 4px 0;
+        text-transform: uppercase;
+    }
+    .actions-divider {
+        height: 1px;
+        background: linear-gradient(to right, #d1d5db, #e5e7eb, #ffffff);
+        margin-bottom: 10px;
     }
 
-    /* Pastel action cards – thin grey border around each sanction */
+    /* Pastel action cards */
     .action-card {
-        background: #f8fafc;              /* very light grey/blue */
+        background: #f8fafc;
         border-radius: 18px;
-        padding: 16px 20px;
-        margin-bottom: 12px;
-        border: 1px solid #d1d5db;        /* thin grey border */
-        box-shadow: 0 4px 10px rgba(15, 23, 42, 0.04);
+        padding: 14px 20px;
+        margin-bottom: 10px;
+        border: 1px solid #d1d5db;
+        box-shadow: 0 3px 8px rgba(15, 23, 42, 0.05);
         transition: transform 0.12s ease, box-shadow 0.12s ease, border-color 0.12s ease;
     }
     .action-card:hover {
-        transform: translateY(-2px);
-        box-shadow: 0 10px 22px rgba(15, 23, 42, 0.12);
-        border-color: #c7d2fe;           /* subtle pastel highlight */
+        transform: translateY(-1px);
+        box-shadow: 0 8px 18px rgba(15, 23, 42, 0.13);
+        border-color: #c7d2fe;
     }
 
-    /* Header row: title + stage + status chip */
     .action-header {
         display: flex;
         justify-content: space-between;
@@ -41,49 +46,38 @@ st.markdown(
     .action-title {
         font-weight: 700;
         color: #1e293b;
-        font-size: 1.05rem;
+        font-size: 1.0rem;
         display: flex;
         align-items: center;
         gap: 8px;
     }
     .action-title-icon {
-        font-size: 1.1rem;
+        font-size: 1.05rem;
     }
     .action-pill-stage {
         background: #e0f2fe;
         color: #0369a1;
         border-radius: 999px;
         padding: 3px 9px;
-        font-size: 0.78rem;
+        font-size: 0.75rem;
         font-weight: 600;
     }
 
-    /* Status chip */
     .status-pill {
         border-radius: 999px;
         padding: 4px 11px;
         font-size: 0.78rem;
         font-weight: 600;
     }
-    .status-pending {
-        background: #fef9c3;
-        color: #854d0e;
-    }
-    .status-approved {
-        background: #dcfce7;
-        color: #166534;
-    }
-    .status-rejected {
-        background: #fee2e2;
-        color: #b91c1c;
-    }
+    .status-pending { background: #fef9c3; color: #854d0e; }
+    .status-approved { background: #dcfce7; color: #166534; }
+    .status-rejected { background: #fee2e2; color: #b91c1c; }
 
-    /* Detail row: value + risk pills */
     .detail-row {
         display: flex;
         flex-wrap: wrap;
         gap: 8px;
-        margin-top: 4px;
+        margin-top: 2px;
         font-size: 0.9rem;
         color: #475569;
     }
@@ -110,7 +104,6 @@ st.markdown(
     .risk-medium { background: #fef9c3; color: #a16207; }
     .risk-high { background: #fee2e2; color: #b91c1c; }
 
-    /* Pastel View button */
     .stButton > button {
         background: linear-gradient(135deg, #c7d2fe, #e0e7ff);
         color: #1e293b;
@@ -131,13 +124,10 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
-# ---- TITLE ----
 st.markdown('<div class="actions-title">Actions</div>', unsafe_allow_html=True)
+st.markdown('<div class="actions-divider"></div>', unsafe_allow_html=True)
 
-# ---- CARDS ----
 for _, r in filtered_df.reset_index(drop=True).iterrows():
-
-    # Risk colour class
     risk_value = str(r["Risk Level"]).lower()
     if "high" in risk_value or "red" in risk_value:
         risk_class = "risk-high"
@@ -146,7 +136,6 @@ for _, r in filtered_df.reset_index(drop=True).iterrows():
     else:
         risk_class = "risk-low"
 
-    # Status colour class
     status_value = str(r["Status in Stage"]).lower()
     if "approved" in status_value:
         status_class = "status-approved"
@@ -160,7 +149,6 @@ for _, r in filtered_df.reset_index(drop=True).iterrows():
     c1, c2 = st.columns([5, 1])
 
     with c1:
-        # Header row
         st.markdown(
             f"""
             <div class="action-header">
@@ -177,7 +165,6 @@ for _, r in filtered_df.reset_index(drop=True).iterrows():
             unsafe_allow_html=True,
         )
 
-        # Detail row
         st.markdown(
             f"""
             <div class="detail-row">
@@ -200,4 +187,4 @@ for _, r in filtered_df.reset_index(drop=True).iterrows():
             st.session_state.navigate_to_feedback = True
             st.rerun()
 
-    st.markdown("</div>", unsafe_allow_html=True)  # close .action-card
+    st.markdown("</div>", unsafe_allow_html=True)
