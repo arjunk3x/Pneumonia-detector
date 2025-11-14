@@ -1,201 +1,234 @@
-# ----------- PASTEL UI CSS (wrapper + filters + table headers) -----------
+# ================================
+# STAGE ACTIONS – Sticky Action Bar
+# ================================
+
+# Pastel CSS for this section
 st.markdown(
     """
     <style>
-
-    /* ------------------------------
-        SECTION WRAPPER
-    ------------------------------*/
-    .pending-wrapper {
-        background: #f8fafc;
+    /* Outer wrapper – light pastel card, can be sticky if desired */
+    .stage-actions-wrapper {
+        background: #fdfbff; /* soft lilac */
         border-radius: 18px;
-        padding: 20px 22px;
-        border: 1px solid #e2e8f0;
-        box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
-        margin-bottom: 20px;
+        padding: 16px 20px;
+        border: 1px solid #e5e7eb;
+        box-shadow: 0 4px 14px rgba(148, 163, 184, 0.35);
+        margin-bottom: 22px;
+        position: sticky;
+        top: 0;
+        z-index: 20;
+        backdrop-filter: blur(6px);
     }
 
-    .section-title {
-        font-size: 1.35rem;
+    .stage-actions-header-row {
+        display: flex;
+        justify-content: space-between;
+        align-items: flex-start;
+        gap: 12px;
+        margin-bottom: 10px;
+    }
+
+    .stage-actions-title {
+        font-size: 1.1rem;
         font-weight: 700;
-        letter-spacing: 0.04em;
-        color: #0f172a;
-        margin-bottom: 4px;
+        letter-spacing: 0.05em;
         text-transform: uppercase;
+        color: #111827;
+        margin-bottom: 4px;
     }
 
-    .section-subtitle {
+    .stage-actions-sub {
         font-size: 0.9rem;
         color: #6b7280;
-        margin-bottom: 18px;
+        max-width: 520px;
     }
 
-
-    /* ------------------------------
-        FILTERS – Pastel input boxes
-    ------------------------------*/
-    .filter-container {
-        background: #eef2ff;      /* soft pastel lavender */
-        padding: 14px 16px;
-        border-radius: 14px;
-        border: 1px solid #e0e7ff;
-        box-shadow: 0 3px 8px rgba(99, 102, 241, 0.12);
-        margin-bottom: 16px;
+    .stage-pill-label {
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #9ca3af;
     }
 
-    .filter-help {
-        font-size: 0.82rem;
+    /* Status badge */
+    .badge {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        padding: 4px 11px;
+        border-radius: 999px;
+        font-size: 0.8rem;
         font-weight: 600;
-        color: #6366f1;
-        margin-bottom: 10px;
-        letter-spacing: 0.02em;
+        background: #e0f2fe;
+        color: #0369a1;
+        margin-top: 4px;
     }
 
-    /* Style text inputs / multiselects */
-    .stTextInput > div > div > input,
-    .stMultiSelect div[data-baseweb="select"] > div {
-        background-color: #ffffff !important;
-        border-radius: 10px !important;
-        border: 1px solid #d4d4ff !important;
-        box-shadow: inset 0 1px 3px rgba(99, 102, 241, 0.15);
+    /* Role chip */
+    .role-chip {
+        display: inline-flex;
+        align-items: center;
+        padding: 4px 11px;
+        border-radius: 999px;
+        font-size: 0.78rem;
+        font-weight: 600;
+        background: #ecfeff;
+        color: #0f766e;
+        border: 1px solid #a5f3fc;
+        gap: 6px;
+        margin-top: 4px;
     }
 
-    .stTextInput > div > div > input:hover,
-    .stMultiSelect div[data-baseweb="select"] > div:hover {
-        border: 1px solid #a5b4fc !important;
-        box-shadow: 0 0 0 3px rgba(165, 180, 252, 0.35);
+    /* Inner form block */
+    .stage-actions-form {
+        background: #eef2ff;
+        border-radius: 14px;
+        padding: 12px 14px 14px 14px;
+        border: 1px solid #e0e7ff;
+        box-shadow: inset 0 1px 3px rgba(79, 70, 229, 0.12);
+        margin-top: 8px;
     }
 
-    /* Widget labels */
-    label[data-testid="stWidgetLabel"] > div {
+    /* Make labels slightly stronger for this section */
+    .stage-actions-form label[data-testid="stWidgetLabel"] > div {
         font-weight: 600;
         color: #4338ca !important;
     }
 
-
-    /* ------------------------------
-        DATA TABLE HEADER STYLING
-    ------------------------------*/
-    [data-testid="stDataFrame"] thead tr th,
-    [data-testid="stDataEditor"] thead tr th {
-        background: #e0f2fe !important;             /* pastel sky blue */
-        color: #0c4a6e !important;
-        font-weight: 700 !important;
-        border-bottom: 2px solid #bae6fd !important;
-        font-size: 0.92rem !important;
-        padding-top: 8px !important;
-        padding-bottom: 8px !important;
-        border-radius: 6px !important;
+    /* Buttons (submit / reset) – pastel pills */
+    .stButton > button {
+        background: linear-gradient(135deg, #c7d2fe, #e0e7ff);
+        color: #1e293b;
+        border-radius: 999px;
+        border: none;
+        padding: 0.45rem 1.1rem;
+        font-size: 0.9rem;
+        font-weight: 600;
+        box-shadow: 0 4px 10px rgba(148, 163, 184, 0.35);
+        transition: transform 0.1s ease, box-shadow 0.1s ease;
     }
-
-    /* Table container */
-    [data-testid="stDataFrame"], [data-testid="stDataEditor"] {
-        background-color: #f0f9ff !important;
-        border-radius: 14px;
-        border: 1px solid #bae6fd;
-        box-shadow: 0 3px 10px rgba(56, 189, 248, 0.25);
-        padding: 6px;
+    .stButton > button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 18px rgba(148, 163, 184, 0.55);
     }
-
+    .stButton > button:active {
+        transform: translateY(0) scale(0.99);
+        box-shadow: 0 3px 8px rgba(148, 163, 184, 0.45);
+    }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
-# ---------- SECTION WRAPPER ----------
-with st.container():
-    st.markdown('<div class="pending-wrapper">', unsafe_allow_html=True)
+if current_stage not in STAGE_KEYS:
+    st.subheader(f"Stage Actions – {current_stage}")
+    st.info("This stage has no configured actions.")
+else:
+    meta = STAGE_KEYS[current_stage]
+    existing_status = str(t_row.get(meta["status"], "Pending"))
 
-    # Title + subtitle
-    st.markdown(
-        f"""
-        <div class="section-title">Pending in {current_role}</div>
-        <div class="section-subtitle">
-            Sanctions currently at your stage. Use the filters below to focus on specific IDs, statuses, or stages.
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    # Who is allowed?
+    user_internal_role = _current_internal_role()        # e.g. "DataGuild"
+    user_stage_label = _current_stage_label_for_role()   # e.g. "Data Guild"
+    role_can_act = (user_stage_label == current_stage)
 
-    # ---------- BUILD DISPLAY DF ----------
-    # risk_series from full df; default to "Medium"
-    risk_series = df.get("Risk Level", pd.Series(["Medium"] * len(df)))
+    with st.container():
+        st.markdown('<div class="stage-actions-wrapper">', unsafe_allow_html=True)
 
-    risk_txt = (
-        pending_df.index.to_series()
-        .map(lambda i: risk_series.iloc[i] if i in risk_series.index else "Medium")
-        .fillna("Medium")
-        .astype(str)
-    )
+        # ---------- HEADER / STATUS ROW ----------
+        st.markdown(
+            f"""
+            <div class="stage-actions-header-row">
+                <div>
+                    <div class="stage-actions-title">
+                        Stage Actions – {current_stage}
+                    </div>
+                    <div class="stage-actions-sub">
+                        Decide what to do with this sanction at the current stage,
+                        optionally assign it to someone, and add comments for the audit trail.
+                    </div>
+                </div>
+                <div>
+                    <div class="stage-pill-label">CURRENT STATUS</div>
+                    <span class="badge">{existing_status}</span>
+                </div>
+            </div>
 
-    def risk_badge(v: str) -> str:
-        s = str(v).strip().lower()
-        if s == "high":
-            return "🔴 High"
-        if s == "low":
-            return "🟢 Low"
-        return "🟠 Medium"
-
-    display_df = pd.DataFrame(
-        {
-            "Sanction_ID": pending_df["Sanction_ID"].astype(str),
-            "Value": pending_df["Value"],
-            "Stage": current_role,
-            "Status in Stage": pending_df[status_col].fillna("Pending").astype(str),
-            "Risk Level": risk_txt.map(risk_badge),
-        }
-    )
-
-    # ---------- FILTERS (inside pastel container) ----------
-    st.markdown('<div class="filter-container">', unsafe_allow_html=True)
-    st.markdown('<div class="filter-help">FILTERS</div>', unsafe_allow_html=True)
-
-    colA, colB, colC = st.columns(3)
-
-    with colA:
-        search_id = st.text_input("Search by Sanction_ID", "")
-
-    with colB:
-        selected_status = st.multiselect(
-            "Filter by Status",
-            options=sorted(display_df["Status in Stage"].dropna().unique()),
+            <div>
+                <span class="stage-pill-label">YOUR ROLE</span><br/>
+                <span class="role-chip">
+                    👤 {user_stage_label or user_internal_role}
+                </span>
+            </div>
+            """,
+            unsafe_allow_html=True,
         )
 
-    with colC:
-        selected_stage = st.multiselect(
-            "Filter by Stage",
-            options=sorted(display_df["Stage"].dropna().unique()),
-            default=[current_role] if current_role in display_df["Stage"].unique() else [],
-        )
+        if not role_can_act:
+            st.warning(
+                f"Your role (**{user_stage_label}**) cannot act on **{current_stage}**.  "
+                "Only the owning team may approve/reject/request changes for this stage."
+            )
 
-    st.markdown("</div>", unsafe_allow_html=True)  # close filter-container
+        # ---------- FORM ----------
+        with st.form(f"form_{current_stage}"):
+            st.markdown('<div class="stage-actions-form">', unsafe_allow_html=True)
 
-    # ---------- APPLY FILTERS ----------
-    filtered_df = display_df.copy()
-    if search_id:
-        filtered_df = filtered_df[
-            filtered_df["Sanction_ID"].str.contains(search_id, case=False)
-        ]
-    if selected_status:
-        filtered_df = filtered_df[
-            filtered_df["Status in Stage"].isin(selected_status)
-        ]
-    if selected_stage:
-        filtered_df = filtered_df[filtered_df["Stage"].isin(selected_stage)]
+            colA, colB, colC = st.columns((1.2, 1, 1))
 
-    # ---------- PASTEL DATA EDITOR ----------
-    st.data_editor(
-        filtered_df[["Sanction_ID", "Value", "Stage", "Status in Stage", "Risk Level"]],
-        hide_index=True,
-        disabled=True,
-        use_container_width=True,
-        column_config={
-            "Sanction_ID": st.column_config.TextColumn("Sanction ID"),
-            "Value": st.column_config.NumberColumn("Value"),
-            "Stage": st.column_config.TextColumn("Stage"),
-            "Status in Stage": st.column_config.TextColumn("Status in Stage"),
-            "Risk Level": st.column_config.TextColumn("Risk Level"),
-        },
-    )
+            with colA:
+                decision = st.radio(
+                    "Decision",
+                    ["Approve ✅", "Reject ⛔", "Request changes ✏️"],
+                    index=0,
+                    disabled=not role_can_act,
+                )
 
-    st.markdown("</div>", unsafe_allow_html=True)  # close pending-wrapper
+            with colB:
+                assigned_to = st.text_input(
+                    "Assign to (email or name)",
+                    value=str(t_row.get(meta["assigned_to"], "")),
+                    disabled=not role_can_act,
+                )
+
+            with colC:
+                when = st.text_input(
+                    "Decision time",
+                    value=value_now_iso(),
+                    help="Auto-filled; can be edited",
+                    disabled=not role_can_act,
+                )
+
+            comment = st.text_area(
+                "Comments / Rationale",
+                placeholder="Add context for the audit trail (optional)",
+                disabled=not role_can_act,
+            )
+
+            st.markdown("</div>", unsafe_allow_html=True)  # close .stage-actions-form
+
+            # Buttons row
+            c1, c2, _ = st.columns((0.4, 0.4, 0.2))
+            with c1:
+                submitted = st.form_submit_button(
+                    "Submit decision",
+                    use_container_width=True,
+                    disabled=not role_can_act,
+                )
+            with c2:
+                cancel = st.form_submit_button(
+                    "Reset form",
+                    use_container_width=True,
+                    disabled=not role_can_act,
+                )
+
+        st.markdown("</div>", unsafe_allow_html=True)  # close .stage-actions-wrapper
+
+# ---- keep your existing server-side logic here ----
+# e.g.
+# if submitted:
+#     if not role_can_act:
+#         st.error("Action blocked: your role cannot act on this stage.")
+#         st.stop()
+#     ...
+#     (tracker updates, CSV writes, st.success, st.toast, st.rerun, etc.)
