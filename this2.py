@@ -1,197 +1,162 @@
-st.markdown("""
-    <style>
+/* ===== Details table styling ===== */
+.details-card {
+    margin-top: 0.5rem;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+    background: #ffffff;
+}
 
-    /* Import Inter font globally */
-    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+.details-card table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
 
-    html, body, [class*="css"] {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI",
-                     Roboto, Helvetica, Arial, sans-serif !important;
+.details-card thead th {
+    background: #E7F3D9;              /* light green header */
+    padding: 0.55rem 0.75rem;
+    font-weight: 600;
+}
+
+.details-card tbody td {
+    padding: 0.45rem 0.75rem;
+    border-top: 1px solid #edf1f7;
+}
+
+.details-card tbody tr:nth-child(even) {
+    background: #fafafa;
+}
+
+/* ===== Attachments list styling ===== */
+.attachments-list {
+    margin-top: 0.5rem;
+}
+
+.attachment-card {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0.55rem 0.8rem;
+    margin-bottom: 0.45rem;
+    background: #ffffff;
+    border-radius: 10px;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+}
+
+.attachment-left {
+    display: flex;
+    align-items: center;
+    gap: 0.55rem;
+}
+
+.attachment-icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.9rem;
+    background: #FDECEA;              /* light red background */
+    color: #C53030;                    /* red icon colour */
+}
+
+.attachment-name {
+    font-size: 0.9rem;
+}
+
+.attachment-download {
+    font-size: 1.1rem;
+    color: #9ca3af;
+}
+
+
+
+
+
+
+# ================================
+# DETAILS + ATTACHMENTS
+# ================================
+left, right = st.columns([3, 2], gap="large")
+
+# ---------- LEFT: DETAILS ----------
+with left:
+    st.markdown(
+        '<h3 style="font-weight:700; margin-bottom:0.5rem;">Details</h3>',
+        unsafe_allow_html=True,
+    )
+
+    details = {
+        "Sanction ID": sid,
+        "ART/Delivery Vehicle": s_row.get("ART/Delivery Vehicle", "-"),
+        "Status": s_row.get("Status", t_row.get("Overall_status", "-")),
+        "Sponsor": s_row.get("Sponsor", "-"),
+        "Amount": amount,
+        "Current Stage": current_stage,
+        "Submitted": s_row.get("Submitted", t_row.get("Submitted_at", "-")),
+        "Title": t_row.get("Title", "-"),
+        "Currency": t_row.get("Currency", "GBP"),
+        "Risk Level": t_row.get("Risk_Level", "-"),
+        "Linked resanctions": s_row.get("Linked resanctions", "-"),
     }
 
-    /* 🔥 Bigger + Bold form labels */
-    .stRadio > label,
-    .stTextInput > label,
-    .stTextArea > label,
-    .stSelectbox > label,
-    label[data-testid="stMarkdownContainer"] {
-        font-weight: 600 !important;
-        font-size: 1rem !important;
-        margin-bottom: 0.25rem !important;
-    }
+    # Build an HTML table so we can style it like the mock
+    rows_html = "".join(
+        f"<tr><td>{field}</td><td>{value}</td></tr>"
+        for field, value in details.items()
+    )
 
-    /* Compact white text inputs */
-    .stTextInput > div > div > input {
-        font-size: 0.9rem !important;
-        padding: 0.3rem 0.4rem !important;
-        background-color: #ffffff !important;
-    }
+    st.markdown(
+        f"""
+        <div class="details-card">
+            <table>
+                <thead>
+                    <tr>
+                        <th>Field</th>
+                        <th>Value</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows_html}
+                </tbody>
+            </table>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
-    /* Compact white textarea */
-    .stTextArea textarea {
-        font-size: 0.9rem !important;
-        padding: 0.35rem 0.4rem !important;
-        min-height: 90px !important;
-        background-color: #ffffff !important;
-    }
+# ---------- RIGHT: ATTACHMENTS ----------
+with right:
+    st.markdown(
+        '<h3 style="font-weight:700; margin-bottom:0.5rem;">Attachments</h3>',
+        unsafe_allow_html=True,
+    )
 
-    /* Pastel periwinkle buttons */
-    .stForm button {
-        background-color: #A3ACF3 !important;
-        color: #ffffff !important;
-        border-radius: 999px !important;
-        padding: 0.45rem 1.4rem !important;
-        font-size: 0.9rem !important;
-        font-weight: 600 !important;
-        border: none !important;
-        cursor: pointer !important;
-        transition: 0.15s ease-in-out;
-    }
+    atts = s_row.get("Attachments", "")
 
-    .stForm button:hover {
-        filter: brightness(0.95);
-        transform: translateY(-1px);
-    }
+    if pd.isna(atts) or str(atts).strip() == "":
+        st.info("No attachments uploaded.")
+    else:
+        items = [a.strip() for a in str(atts).replace(";", ",").split(",") if a.strip()]
 
-    </style>
-""", unsafe_allow_html=True)
+        st.markdown('<div class="attachments-list">', unsafe_allow_html=True)
 
-
-# =====================================================
-# STAGE ACTIONS – Sticky Action Bar (ROLE-LOCKED)
-# =====================================================
-
-meta = STAGE_KEYS.get(current_stage, {})
-existing_status = str(t_row.get(meta.get("status", ""), "Pending"))
-
-# Header (Big + Bold + Grey status)
-st.markdown(
-    f"""
-    <div style="margin-bottom:10px;">
-        <span style="font-size:1.5rem; font-weight:700;">
-            Stage Actions – {current_stage}
-        </span><br>
-        <span style="color:#6c757d; font-size:1rem;">
-            Current status:
-            <span class="badge {_pill_class(existing_status)}">
-                {existing_status}
-            </span>
-        </span>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-# If stage not configured
-if current_stage not in STAGE_KEYS:
-    st.info("This stage has no configured actions.")
-else:
-
-    # Permissions
-    user_internal_role = _current_internal_role()
-    user_stage_label = _current_stage_label_for_role()
-    role_can_act = (user_stage_label == current_stage)
-
-    if not role_can_act:
-        st.warning(
-            f"Your role (**{user_stage_label}**) cannot act on **{current_stage}**."
-        )
-
-    # =====================================================
-    # DECISION FORM
-    # =====================================================
-    with st.form(f"form_{current_stage}"):
-
-        # 1. Decision (label now BIG + BOLD)
-        decision = st.radio(
-            "Decision",
-            ["Approve ✅", "Reject 🚫", "Request changes 🔥"],
-            index=0,
-            disabled=not role_can_act,
-        )
-
-        # 2. Assigned To + Decision Time (labels also BIG + BOLD)
-        col1, col2 = st.columns(2)
-
-        with col1:
-            assigned_to = st.text_input(
-                "Assign to (email or name)",
-                value=str(t_row.get(meta.get("assigned_to", ""), "")),
-                disabled=not role_can_act,
+        for i, a in enumerate(items, 1):
+            st.markdown(
+                f"""
+                <div class="attachment-card">
+                    <div class="attachment-left">
+                        <div class="attachment-icon">📄</div>
+                        <div class="attachment-name">{i}. {a}</div>
+                    </div>
+                    <div class="attachment-download">☁️</div>
+                </div>
+                """,
+                unsafe_allow_html=True,
             )
 
-        with col2:
-            when = st.text_input(
-                "Decision time",
-                value=_now_iso(),
-                help="Auto-filled; editable",
-                disabled=not role_can_act,
-            )
+        st.markdown('</div>', unsafe_allow_html=True)
 
-        # 3. Comments / Rationale (label BIG + BOLD)
-        comment = st.text_area(
-            "Comments / Rationale",
-            placeholder="Add comments for audit trail (optional)",
-            disabled=not role_can_act,
-        )
-
-        # 4. Buttons (right-aligned, close together)
-        spacer, col_buttons = st.columns([0.6, 0.4])
-        b_reset, b_submit = col_buttons.columns([0.48, 0.52])
-
-        with b_reset:
-            cancel = st.form_submit_button("Reset form", disabled=not role_can_act)
-
-        with b_submit:
-            submitted = st.form_submit_button("Submit decision", disabled=not role_can_act)
-
-    # =====================================================
-    # BACKEND SUBMISSION LOGIC
-    # =====================================================
-    if submitted:
-        if not role_can_act:
-            st.error("You are not authorised to perform this action.")
-            st.stop()
-
-        tracker_df = _ensure_tracker_columns(tracker_df)
-        mask = tracker_df["Sanction_ID"] == sid
-
-        # Map decision → status
-        dec_lower = decision.lower()
-        if "approve" in dec_lower:
-            new_status = "Approved"
-        elif "reject" in dec_lower:
-            new_status = "Rejected"
-        else:
-            new_status = "Changes requested"
-
-        # Update fields
-        tracker_df.loc[mask, meta["status"]] = new_status
-        tracker_df.loc[mask, meta.get("assigned_to", "assigned_to")] = assigned_to
-        tracker_df.loc[mask, meta.get("decision_at", "decision_at")] = when
-        tracker_df.loc[mask, meta.get("comment", "comment")] = comment
-
-        nxt = _next_stage(current_stage) if new_status == "Approved" else None
-
-        if new_status == "Approved" and nxt:
-            tracker_df.loc[mask, "Current Stage"] = nxt
-            tracker_df.loc[mask, "Overall_status"] = "In progress"
-            for stg, m in STAGE_KEYS.items():
-                tracker_df.loc[mask, m["flag"]] = (stg == nxt)
-        elif new_status == "Rejected":
-            tracker_df.loc[mask, "Overall_status"] = "Rejected"
-        else:
-            tracker_df.loc[mask, "Overall_status"] = "Changes requested"
-
-        # Save & sync to files
-        _write_csv(tracker_df, APPROVER_TRACKER_PATH)
-
-        if "Sanction ID" in sanctions_df.columns:
-            ms = sanctions_df["Sanction ID"] == sid
-            sanctions_df.loc[ms, "Current Stage"] = tracker_df.loc[mask, "Current Stage"].iloc[0]
-            sanctions_df.loc[ms, "Status"] = tracker_df.loc[mask, "Overall_status"].iloc[0]
-            _write_csv(sanctions_df, SANCTIONS_PATH)
-
-        st.success(f"Decision saved: **{new_status}**")
-        st.toast("Updated successfully ✔️")
-        st.rerun()
+st.divider()
