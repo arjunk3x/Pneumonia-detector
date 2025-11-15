@@ -2,31 +2,59 @@
 # STAGE ACTIONS – Sticky Action Bar (ROLE-LOCKED)
 # =====================================================
 
-st.markdown(
-    f"""
-    <div style="margin-bottom:10px;">
-        <span style="font-size:1.5rem; font-weight:700;">
-            Stage Actions – {current_stage}
-        </span>
-        <br>
-        <span style="color:#6c757d; font-size:1rem;">
-            Current status:
-            <span class="badge {_pill_class(existing_status)}">
-                {existing_status}
-            </span>
-        </span>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
+# Guard: if stage not configured
 if current_stage not in STAGE_KEYS:
+    # Even here we still show a consistent header
+    existing_status = str(
+        t_row.get("Overall_status", "Pending")
+        if "Overall_status" in t_row.index
+        else "Pending"
+    )
+
+    st.markdown(
+        f"""
+        <div style="margin-bottom:10px;">
+            <span style="font-size:1.5rem; font-weight:700;">
+                Stage Actions – {current_stage}
+            </span><br>
+            <span style="color:#6c757d; font-size:1rem;">
+                Current status:
+                <span class="badge {_pill_class(existing_status)}">
+                    {existing_status}
+                </span>
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
     st.info("This stage has no configured actions.")
 else:
-    # --- Meta + permissions
+    # --- Meta for this stage
     meta = STAGE_KEYS[current_stage]
-    existing_status = str(t_row.get(meta["status"], "Pending"))
+    existing_status = str(t_row.get(meta.get("status", ""), "Pending"))
 
+    # ==============================
+    # Styled header (Big + Bold)
+    # ==============================
+    st.markdown(
+        f"""
+        <div style="margin-bottom:10px;">
+            <span style="font-size:1.5rem; font-weight:700;">
+                Stage Actions – {current_stage}
+            </span><br>
+            <span style="color:#6c757d; font-size:1rem;">
+                Current status:
+                <span class="badge {_pill_class(existing_status)}">
+                    {existing_status}
+                </span>
+            </span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    # --- Permissions
     user_internal_role = _current_internal_role()        # e.g. "DataGuild"
     user_stage_label = _current_stage_label_for_role()   # e.g. "Data Guild"
     role_can_act = (user_stage_label == current_stage)
@@ -37,12 +65,12 @@ else:
             f"Only the owning team may approve / reject / request changes for this stage."
         )
 
-    # ---------------------------
+    # =====================================================
     # Decision form
-    # ---------------------------
+    # =====================================================
     with st.form(f"form_{current_stage}"):
 
-        # Decision (full width)
+        # Decision – full-width row
         decision = st.radio(
             "Decision",
             ["Approve ✅", "Reject 🚫", "Request changes 🔥"],
@@ -50,7 +78,7 @@ else:
             disabled=not role_can_act,
         )
 
-        # Assigned To + Decision time (same row)
+        # Assigned To + Decision time on the same row
         col1, col2 = st.columns(2)
         with col1:
             assigned_to = st.text_input(
@@ -66,14 +94,14 @@ else:
                 disabled=not role_can_act,
             )
 
-        # Comments / Rationale (full width under the row)
+        # Comments / Rationale below
         comment = st.text_area(
             "Comments / Rationale",
             placeholder="Add comments for the audit trail (optional)",
             disabled=not role_can_act,
         )
 
-        # Buttons row: Reset (secondary) then Submit (primary), right aligned
+        # Buttons row: Reset (secondary) then Submit (primary), right-aligned
         spacer, c_reset, c_submit = st.columns([0.6, 0.2, 0.2])
 
         with c_reset:
@@ -92,7 +120,7 @@ else:
     # Server-side enforcement and tracker updates
     # =====================================================
     if submitted:
-        # Hard-block if user somehow bypasses the UI lock
+        # Hard-block if user bypasses UI lock
         if not role_can_act:
             st.error("Action blocked: your role cannot act on this stage.")
             st.stop()
@@ -107,7 +135,7 @@ else:
 
         tracker_df = _ensure_tracker_columns(tracker_df)
 
-        # Determine new status from radio selection
+        # Map radio decision to status text
         dec_lower = decision.lower()
         if "approve" in dec_lower:
             new_status = "Approved"
@@ -126,11 +154,12 @@ else:
 
         # Decide next stage / overall status
         nxt = _next_stage(current_stage) if new_status == "Approved" else None
+
         if new_status == "Approved" and nxt:
             tracker_df.loc[mask, "Current Stage"] = nxt
             tracker_df.loc[mask, "Overall_status"] = "In progress"
 
-            # Flip flags so only the next stage is "active"
+            # Flip flags so only the next stage is active
             for stg, m in STAGE_KEYS.items():
                 tracker_df.loc[mask, m["flag"]] = (stg == nxt)
 
@@ -145,7 +174,7 @@ else:
         except Exception as e:
             st.error(f"Failed to update {APPROVER_TRACKER_PATH}: {e}")
         else:
-            # Optional mirror to sanctions_data
+            # Optional mirror back to sanctions_df
             try:
                 if "Sanction ID" in sanctions_df.columns:
                     ms = sanctions_df["Sanction ID"] == sid
@@ -164,5 +193,5 @@ else:
             st.toast("Updated ✅")
             st.rerun()
 
+    # Close any outer wrapper div if you opened one earlier
     st.markdown("</div>", unsafe_allow_html=True)
-
