@@ -64,6 +64,7 @@
 
 
 # ---------- RIGHT: ATTACHMENTS – Sanction Document View ----------
+# ---------- RIGHT: ATTACHMENTS – Sanction Document View ----------
 with right:
     st.markdown(
         '<h3 style="font-weight:700; margin-bottom:0.5rem;">Attachments</h3>',
@@ -75,46 +76,62 @@ with right:
     if pd.isna(atts) or str(atts).strip() == "":
         st.info("No attachments uploaded.")
     else:
-        # Take the first attachment as the main “Sanction Document”
+        # Parse the attachments list
         items = [a.strip() for a in str(atts).replace(";", ",").split(",") if a.strip()]
-        main_name = items[0] if items else "Sanction_Document.pdf"
+        main_name = items[0]                                  # use first document
 
-        # Open the card (header + body; keep the div open for the button)
+        # Start the panel
         st.markdown(
             f"""
-            <div class="attachments-panel">
-                <div class="attachments-panel-header">
-                    <div class="attachments-panel-icon">PDF</div>
-                    <div class="attachments-panel-title">Sanction Document View</div>
-                </div>
-
-                <div class="attachments-panel-body">
-                    <!-- You can replace this with a real preview image if you like -->
-                    <div style="height:220px; border-radius:8px; border:1px solid #e5e7eb; background:linear-gradient(180deg,#ffffff 0%,#f1f5f9 100%); display:flex; align-items:center; justify-content:center; font-size:0.85rem; color:#6b7280;">
-                        Document preview placeholder
+                <div class="attachments-panel">
+                    <div class="attachments-panel-header">
+                        <div class="attachments-panel-icon">PDF</div>
+                        <div class="attachments-panel-title">Sanction Document View</div>
                     </div>
-
-                    <div class="attachments-panel-caption">
-                        The official regulatory sanction document is available for direct viewing and download.
-                    </div>
-                </div>
             """,
             unsafe_allow_html=True,
         )
 
-        # Download button styled to look like the bottom bar in the screenshot
+        # --- PDF PREVIEW (optional but recommended) ---
+        # Path where preview images would exist (PNG/JPG)
+        preview_path = f"assets/previews/{main_name.replace('.pdf', '.png')}"
+
+        if os.path.exists(preview_path):
+            st.image(preview_path, use_column_width=True)
+        else:
+            # Placeholder box
+            st.markdown(
+                """
+                <div class="attachments-panel-body">
+                    <div style="height:220px; border-radius:8px; border:1px solid #e5e7eb; 
+                                background:linear-gradient(180deg,#ffffff 0%,#f1f5f9 100%);
+                                display:flex; align-items:center; justify-content:center;
+                                font-size:0.85rem; color:#6b7280;">
+                        Document preview not available
+                    </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+        # Caption
+        st.markdown(
+            """
+            <div class="attachments-panel-caption">
+                The official sanction document is available for viewing and download.
+            </div>
+            </div> <!-- end attachments-panel-body -->
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # --- REAL PDF DOWNLOAD ---
         st.markdown('<div class="download-pdf-btn">', unsafe_allow_html=True)
 
-        # ---- Load real file bytes if available ----
-        from pathlib import Path
-
         try:
-            # Adjust this path to where your PDFs actually live
-            doc_path = Path("assets/attachments") / main_name
-            file_bytes = doc_path.read_bytes()
+            pdf_path = Path("assets/attachments") / main_name
+            file_bytes = pdf_path.read_bytes()
         except Exception:
-            # Fallback: dummy bytes so the app still runs
-            file_bytes = main_name.encode("utf-8")
+            file_bytes = main_name.encode("utf-8")  # fallback
 
         st.download_button(
             label="Download Sanction PDF",
@@ -123,5 +140,7 @@ with right:
             key=f"download_{sid}",
         )
 
-        # Close button wrapper and main card div
+        # Close wrapper
         st.markdown("</div></div>", unsafe_allow_html=True)
+
+
