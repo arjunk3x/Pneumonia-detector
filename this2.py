@@ -14,6 +14,17 @@ html, body, [class*="css"] {
     background: #ffffff;
 }
 
+
+/* ===== HIGHLIGHTED ROWS (Sponsor, Amount, etc.) ===== */
+.details-card tbody tr.highlight-row td {
+    background: #FFF7E0 !important;   /* soft yellow */
+}
+
+/* Hover effect */
+.details-card tbody tr.highlight-row:hover td {
+    background: #FFE8B3 !important;
+}
+
 .details-card table {
     width: 100%;
     border-collapse: collapse;
@@ -84,17 +95,15 @@ html, body, [class*="css"] {
 
 
 # ================================
-# DETAILS + ATTACHMENTS
+# DETAILS SECTION (LEFT SIDE)
 # ================================
-left, right = st.columns([3, 2], gap="large")
-
-# ---------- LEFT: DETAILS ----------
 with left:
     st.markdown(
         '<h3 style="font-weight:700; margin-bottom:0.5rem;">Details</h3>',
         unsafe_allow_html=True,
     )
 
+    # Build the Details dictionary
     details = {
         "Sanction ID": sid,
         "ART/Delivery Vehicle": s_row.get("ART/Delivery Vehicle", "-"),
@@ -104,17 +113,21 @@ with left:
         "Current Stage": current_stage,
         "Submitted": s_row.get("Submitted", t_row.get("Submitted_at", "-")),
         "Title": t_row.get("Title", "-"),
-        "Currency": t_row.get("Currency", "GBP"),
+        "Currency": t_row.get("Currency", "-"),
         "Risk Level": t_row.get("Risk_Level", "-"),
         "Linked resanctions": s_row.get("Linked resanctions", "-"),
     }
 
-    # Build an HTML table so we can style it like the mock
-    rows_html = "".join(
-        f"<tr><td>{field}</td><td>{value}</td></tr>"
-        for field, value in details.items()
-    )
+    # Fields to highlight in yellow
+    highlight_fields = {"Sponsor", "Amount"}
 
+    # Build table rows
+    rows_html = ""
+    for field, value in details.items():
+        row_class = "highlight-row" if field in highlight_fields else ""
+        rows_html += f'<tr class="{row_class}"><td>{field}</td><td>{value}</td></tr>'
+
+    # Render the table
     st.markdown(
         f"""
         <div class="details-card">
@@ -134,37 +147,5 @@ with left:
         unsafe_allow_html=True,
     )
 
-# ---------- RIGHT: ATTACHMENTS ----------
-with right:
-    st.markdown(
-        '<h3 style="font-weight:700; margin-bottom:0.5rem;">Attachments</h3>',
-        unsafe_allow_html=True,
-    )
 
-    atts = s_row.get("Attachments", "")
-
-    if pd.isna(atts) or str(atts).strip() == "":
-        st.info("No attachments uploaded.")
-    else:
-        items = [a.strip() for a in str(atts).replace(";", ",").split(",") if a.strip()]
-
-        st.markdown('<div class="attachments-list">', unsafe_allow_html=True)
-
-        for i, a in enumerate(items, 1):
-            st.markdown(
-                f"""
-                <div class="attachment-card">
-                    <div class="attachment-left">
-                        <div class="attachment-icon">📄</div>
-                        <div class="attachment-name">{i}. {a}</div>
-                    </div>
-                    <div class="attachment-download">☁️</div>
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
-
-        st.markdown('</div>', unsafe_allow_html=True)
-
-st.divider()
 
