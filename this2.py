@@ -1,151 +1,127 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+/* ===== Attachments – Sanction Document View Card ===== */
 
-html, body, [class*="css"] {
-    font-family: 'Inter', sans-serif !important;
-}
-
-
-/* ===== Details table styling ===== */
-.details-card {
+.attachments-panel {
     margin-top: 0.5rem;
-    border-radius: 10px;
-    overflow: hidden;
-    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
     background: #ffffff;
+    border-radius: 16px;
+    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.10);
+    padding: 1rem 1.25rem 1.1rem;
 }
 
-
-/* ===== HIGHLIGHTED ROWS (Sponsor, Amount, etc.) ===== */
-.details-card tbody tr.highlight-row td {
-    background: #FFF7E0 !important;   /* soft yellow */
-}
-
-/* Hover effect */
-.details-card tbody tr.highlight-row:hover td {
-    background: #FFE8B3 !important;
-}
-
-.details-card table {
-    width: 100%;
-    border-collapse: collapse;
-    font-size: 0.9rem;
-}
-
-.details-card thead th {
-    background: #E7F3D9;              /* light green header */
-    padding: 0.55rem 0.75rem;
-    font-weight: 600;
-}
-
-.details-card tbody td {
-    padding: 0.45rem 0.75rem;
-    border-top: 1px solid #edf1f7;
-}
-
-.details-card tbody tr:nth-child(even) {
-    background: #fafafa;
-}
-
-/* ===== Attachments list styling ===== */
-.attachments-list {
-    margin-top: 0.5rem;
-}
-
-.attachment-card {
+.attachments-panel-header {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 0.55rem 0.8rem;
-    margin-bottom: 0.45rem;
-    background: #ffffff;
-    border-radius: 10px;
-    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+    gap: 0.65rem;
+    margin-bottom: 0.75rem;
 }
 
-.attachment-left {
-    display: flex;
-    align-items: center;
-    gap: 0.55rem;
-}
-
-.attachment-icon {
-    width: 26px;
-    height: 26px;
-    border-radius: 6px;
+.attachments-panel-icon {
+    width: 32px;
+    height: 32px;
+    border-radius: 8px;
     display: flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.9rem;
-    background: #FDECEA;              /* light red background */
-    color: #C53030;                    /* red icon colour */
+    font-size: 1rem;
+    font-weight: 600;
+    background: #E74C3C;        /* red PDF-style icon */
+    color: #ffffff;
 }
 
-.attachment-name {
-    font-size: 0.9rem;
+.attachments-panel-title {
+    font-size: 1.05rem;
+    font-weight: 600;
 }
 
-.attachment-download {
-    font-size: 1.1rem;
-    color: #9ca3af;
+.attachments-panel-body {
+    background: #F8FAFC;        /* light grey/blue content area */
+    border-radius: 12px;
+    padding: 0.85rem;
+    text-align: center;
+    margin-bottom: 0.75rem;
+}
+
+/* Placeholder for preview text/image caption */
+.attachments-panel-caption {
+    margin-top: 0.55rem;
+    font-size: 0.85rem;
+    color: #6b7280;
+}
+
+/* Full-width download button inside the card */
+.download-pdf-btn button {
+    width: 100% !important;
+    background-color: #A3ACF3 !important;   /* pastel periwinkle */
+    color: #ffffff !important;
+    border-radius: 999px !important;
+    border: none !important;
+    padding: 0.6rem 1.4rem !important;
+    font-weight: 600 !important;
+    font-size: 0.95rem !important;
+    cursor: pointer !important;
 }
 
 
 
-
-
-
-# ================================
-# DETAILS SECTION (LEFT SIDE)
-# ================================
-with left:
+# ---------- RIGHT: ATTACHMENTS – Sanction Document View ----------
+with right:
     st.markdown(
-        '<h3 style="font-weight:700; margin-bottom:0.5rem;">Details</h3>',
+        '<h3 style="font-weight:700; margin-bottom:0.5rem;">Attachments</h3>',
         unsafe_allow_html=True,
     )
 
-    # Build the Details dictionary
-    details = {
-        "Sanction ID": sid,
-        "ART/Delivery Vehicle": s_row.get("ART/Delivery Vehicle", "-"),
-        "Status": s_row.get("Status", t_row.get("Overall_status", "-")),
-        "Sponsor": s_row.get("Sponsor", "-"),
-        "Amount": amount,
-        "Current Stage": current_stage,
-        "Submitted": s_row.get("Submitted", t_row.get("Submitted_at", "-")),
-        "Title": t_row.get("Title", "-"),
-        "Currency": t_row.get("Currency", "-"),
-        "Risk Level": t_row.get("Risk_Level", "-"),
-        "Linked resanctions": s_row.get("Linked resanctions", "-"),
-    }
+    atts = s_row.get("Attachments", "")
 
-    # Fields to highlight in yellow
-    highlight_fields = {"Sponsor", "Amount"}
+    if pd.isna(atts) or str(atts).strip() == "":
+        st.info("No attachments uploaded.")
+    else:
+        # Take the first attachment as the main “Sanction Document”
+        items = [a.strip() for a in str(atts).replace(";", ",").split(",") if a.strip()]
+        main_name = items[0] if items else "Sanction_Document.pdf"
 
-    # Build table rows
-    rows_html = ""
-    for field, value in details.items():
-        row_class = "highlight-row" if field in highlight_fields else ""
-        rows_html += f'<tr class="{row_class}"><td>{field}</td><td>{value}</td></tr>'
+        # Open the card (header + body; keep the div open for the button)
+        st.markdown(
+            f"""
+            <div class="attachments-panel">
+                <div class="attachments-panel-header">
+                    <div class="attachments-panel-icon">PDF</div>
+                    <div class="attachments-panel-title">Sanction Document View</div>
+                </div>
 
-    # Render the table
-    st.markdown(
-        f"""
-        <div class="details-card">
-            <table>
-                <thead>
-                    <tr>
-                        <th>Field</th>
-                        <th>Value</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows_html}
-                </tbody>
-            </table>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
+                <div class="attachments-panel-body">
+                    <!-- You can replace this with a real preview image if you like -->
+                    <div style="height:220px; border-radius:8px; border:1px solid #e5e7eb; background:linear-gradient(180deg,#ffffff 0%,#f1f5f9 100%); display:flex; align-items:center; justify-content:center; font-size:0.85rem; color:#6b7280;">
+                        Document preview placeholder
+                    </div>
 
+                    <div class="attachments-panel-caption">
+                        The official regulatory sanction document is available for direct viewing and download.
+                    </div>
+                </div>
+            """,
+            unsafe_allow_html=True,
+        )
 
+        # Download button styled to look like the bottom bar in the screenshot
+        st.markdown('<div class="download-pdf-btn">', unsafe_allow_html=True)
 
+        # ---- Load real file bytes if available ----
+        from pathlib import Path
+
+        try:
+            # Adjust this path to where your PDFs actually live
+            doc_path = Path("assets/attachments") / main_name
+            file_bytes = doc_path.read_bytes()
+        except Exception:
+            # Fallback: dummy bytes so the app still runs
+            file_bytes = main_name.encode("utf-8")
+
+        st.download_button(
+            label="Download Sanction PDF",
+            data=file_bytes,
+            file_name=main_name,
+            key=f"download_{sid}",
+        )
+
+        # Close button wrapper and main card div
+        st.markdown("</div></div>", unsafe_allow_html=True)
