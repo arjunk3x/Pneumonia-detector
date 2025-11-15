@@ -1,83 +1,3 @@
-st.markdown("""
-<style>
-
-.attachments-panel {
-    background: #ffffff;
-    border: 1px solid #e5e7eb;
-    border-radius: 12px;
-    padding: 1.2rem 1.4rem;
-    margin-top: 0.5rem;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.06);
-}
-
-/* Header of the attachments card */
-.attachments-panel-header {
-    display: flex;
-    align-items: center;
-    gap: 0.60rem;
-    margin-bottom: 0.8rem;
-}
-
-/* PDF icon */
-.attachments-panel-icon {
-    background-color: #ef4444;
-    color: white;
-    padding: 0.35rem 0.55rem;
-    border-radius: 6px;
-    font-weight: 700;
-    font-size: 0.75rem;
-    font-family: 'Inter', sans-serif;
-}
-
-/* Title */
-.attachments-panel-title {
-    font-size: 1.05rem;
-    font-weight: 700;
-    color: #374151;
-    font-family: 'Inter', sans-serif;
-}
-
-/* Caption under preview */
-.attachments-panel-caption {
-    margin-top: 0.60rem;
-    color: #6b7280;
-    font-size: 0.85rem;
-    font-family: 'Inter', sans-serif;
-}
-
-/* Footer: aligns the PDF button to the right */
-.attachments-panel-footer {
-    display: flex;
-    justify-content: flex-end;
-    margin-top: 1.2rem;
-}
-
-/* Styled PDF button wrapper */
-.pdf-download-btn button {
-    background-color: #A3ACF3 !important;           /* pastel periwinkle */
-    color: white !important;
-    border-radius: 999px !important;                /* pill button */
-    border: none !important;
-    padding: 0.55rem 1.6rem !important;
-    font-size: 0.92rem !important;
-    font-weight: 600 !important;
-    font-family: 'Inter', sans-serif !important;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.15);
-    cursor: pointer !important;
-    transition: 0.12s ease;
-}
-
-/* Hover effect */
-.pdf-download-btn button:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 4px 10px rgba(0,0,0,0.18);
-}
-
-</style>
-""", unsafe_allow_html=True)
-
-
-# ---------- RIGHT: ATTACHMENTS – Sanction Document View ----------
 # -------------------- ATTACHMENTS PANEL --------------------
 with right:
     st.markdown("<h3 style='font-weight:700;'>Attachments</h3>", unsafe_allow_html=True)
@@ -87,25 +7,55 @@ with right:
     if pd.isna(atts) or str(atts).strip() == "":
         st.info("No attachments uploaded.")
     else:
-        # Use first item only
+        # Use first attachment as the main sanction PDF
         items = [a.strip() for a in str(atts).replace(";", ",").split(",") if a.strip()]
         main_name = items[0]              # e.g. "SanctionDocument.pdf"
         pdf_name = Path(main_name)
 
-        st.markdown('<div class="attachments-panel">', unsafe_allow_html=True)
-
-        # ---- Header with icon + title ----
+        # Open the outer panel
         st.markdown(
             """
-            <div class="attachments-panel-header">
-                <div class="attachments-panel-icon">PDF</div>
-                <div class="attachments-panel-title">Sanction Document View</div>
+            <div style="
+                background:#ffffff;
+                border:1px solid #e5e7eb;
+                border-radius:12px;
+                padding:1.2rem 1.4rem;
+                margin-top:0.5rem;
+                box-shadow:0 1px 2px rgba(0,0,0,0.06);
+            ">
+            """,
+            unsafe_allow_html=True,
+        )
+
+        # ---- Header: icon + title ----
+        st.markdown(
+            """
+            <div style="display:flex; align-items:center; gap:0.6rem; margin-bottom:0.8rem;">
+                <div style="
+                    background:#ef4444;
+                    color:#ffffff;
+                    padding:0.35rem 0.55rem;
+                    border-radius:6px;
+                    font-weight:700;
+                    font-size:0.75rem;
+                    font-family:Inter, system-ui, sans-serif;
+                ">
+                    PDF
+                </div>
+                <div style="
+                    font-size:1.05rem;
+                    font-weight:700;
+                    color:#374151;
+                    font-family:Inter, system-ui, sans-serif;
+                ">
+                    Sanction Document View
+                </div>
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        # ---- PREVIEW IMAGE (OPTIONAL) ----
+        # ---- PREVIEW IMAGE ----
         preview_path = Path("assets/previews") / (pdf_name.stem + ".png")
 
         if preview_path.exists():
@@ -122,7 +72,8 @@ with right:
                     align-items:center;
                     justify-content:center;
                     color:#6b7280;
-                    font-size:0.9rem;">
+                    font-size:0.9rem;
+                ">
                     Document preview not available
                 </div>
                 """,
@@ -132,31 +83,56 @@ with right:
         # ---- Caption ----
         st.markdown(
             """
-            <div class="attachments-panel-caption">
+            <div style="
+                margin-top:0.6rem;
+                color:#6b7280;
+                font-size:0.85rem;
+                font-family:Inter, system-ui, sans-serif;
+            ">
                 The official sanction document is available for viewing and download.
             </div>
             """,
             unsafe_allow_html=True,
         )
 
-        # ---- PDF DOWNLOAD BUTTON (RIGHT ALIGNED) ----
-        st.markdown('<div class="attachments-panel-footer pdf-download-btn">', unsafe_allow_html=True)
-
-        # Try loading PDF
+        # ---- LOAD REAL PDF BYTES ----
         try:
             pdf_path = Path("assets/attachments") / main_name
             file_bytes = pdf_path.read_bytes()
-        except:
-            file_bytes = main_name.encode("utf-8")
+        except Exception:
+            file_bytes = main_name.encode("utf-8")  # fallback so the app doesn't crash
 
-        st.download_button(
-            label="📄 Download Sanction PDF",
-            data=file_bytes,
-            file_name=main_name,
-            key=f"download_pdf_{sid}",
-        )
+        # Encode PDF bytes as base64 for HTML download link
+        b64 = base64.b64encode(file_bytes).decode()
+        download_href = f"data:application/pdf;base64,{b64}"
 
-        st.markdown("</div></div>", unsafe_allow_html=True)
+        # ---- RIGHT-ALIGNED STYLED PDF BUTTON ----
+        button_html = f"""
+        <div style="display:flex; justify-content:flex-end; margin-top:1.1rem;">
+            <a href="{download_href}" download="{main_name}" style="text-decoration:none;">
+                <button style="
+                    background-color:#A3ACF3;
+                    color:#ffffff;
+                    border:none;
+                    border-radius:999px;
+                    padding:0.55rem 1.7rem;
+                    font-size:0.92rem;
+                    font-weight:600;
+                    font-family:Inter, system-ui, sans-serif;
+                    box-shadow:0 2px 4px rgba(0,0,0,0.15);
+                    cursor:pointer;
+                    display:flex;
+                    align-items:center;
+                    gap:0.4rem;
+                ">
+                    <span>📄</span>
+                    <span>Download Sanction PDF</span>
+                </button>
+            </a>
+        </div>
+        """
 
+        st.markdown(button_html, unsafe_allow_html=True)
 
-
+        # Close outer panel div
+        st.markdown("</div>", unsafe_allow_html=True)
