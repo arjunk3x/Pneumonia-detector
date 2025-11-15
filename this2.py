@@ -1,52 +1,51 @@
-# =====================================================
-# GLOBAL STYLING FOR THIS PAGE
-# =====================================================
-st.markdown(
-    """
+st.markdown("""
     <style>
-    /* Import Inter font for a clean, modern look */
+
+    /* Import Inter font globally */
     @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
 
     html, body, [class*="css"] {
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI",
+                     Roboto, Helvetica, Arial, sans-serif !important;
     }
 
-    /* Improve label clarity */
-    label, .stRadio, .stTextInput label, .stTextArea label {
-        font-weight: 500 !important;
-        font-size: 0.92rem !important;
+    /* 🔥 Bigger + Bold form labels */
+    .stRadio > label,
+    .stTextInput > label,
+    .stTextArea > label,
+    .stSelectbox > label,
+    label[data-testid="stMarkdownContainer"] {
+        font-weight: 600 !important;
+        font-size: 1rem !important;
+        margin-bottom: 0.25rem !important;
     }
 
     /* Compact white text inputs */
     .stTextInput > div > div > input {
-        font-size: 0.85rem !important;
-        padding-top: 0.25rem !important;
-        padding-bottom: 0.25rem !important;
+        font-size: 0.9rem !important;
+        padding: 0.3rem 0.4rem !important;
         background-color: #ffffff !important;
-        color: #000000 !important;
     }
 
     /* Compact white textarea */
     .stTextArea textarea {
-        font-size: 0.85rem !important;
-        padding-top: 0.35rem !important;
-        padding-bottom: 0.35rem !important;
+        font-size: 0.9rem !important;
+        padding: 0.35rem 0.4rem !important;
+        min-height: 90px !important;
         background-color: #ffffff !important;
-        min-height: 85px !important;
-        color: #000000 !important;
     }
 
-    /* Pastel periwinkle buttons inside forms */
+    /* Pastel periwinkle buttons */
     .stForm button {
         background-color: #A3ACF3 !important;
         color: #ffffff !important;
         border-radius: 999px !important;
-        border: none !important;
         padding: 0.45rem 1.4rem !important;
         font-size: 0.9rem !important;
-        font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif !important;
         font-weight: 600 !important;
+        border: none !important;
         cursor: pointer !important;
+        transition: 0.15s ease-in-out;
     }
 
     .stForm button:hover {
@@ -54,14 +53,8 @@ st.markdown(
         transform: translateY(-1px);
     }
 
-    .stForm button:focus {
-        outline: 2px solid #7f88f0 !important;
-        outline-offset: 1px !important;
-    }
     </style>
-    """,
-    unsafe_allow_html=True,
-)
+""", unsafe_allow_html=True)
 
 
 # =====================================================
@@ -93,6 +86,7 @@ st.markdown(
 if current_stage not in STAGE_KEYS:
     st.info("This stage has no configured actions.")
 else:
+
     # Permissions
     user_internal_role = _current_internal_role()
     user_stage_label = _current_stage_label_for_role()
@@ -100,8 +94,7 @@ else:
 
     if not role_can_act:
         st.warning(
-            f"Your role (**{user_stage_label}**) cannot act on **{current_stage}**. "
-            f"Only the owning team may perform approval actions."
+            f"Your role (**{user_stage_label}**) cannot act on **{current_stage}**."
         )
 
     # =====================================================
@@ -109,7 +102,7 @@ else:
     # =====================================================
     with st.form(f"form_{current_stage}"):
 
-        # 1. Decision
+        # 1. Decision (label now BIG + BOLD)
         decision = st.radio(
             "Decision",
             ["Approve ✅", "Reject 🚫", "Request changes 🔥"],
@@ -117,14 +110,16 @@ else:
             disabled=not role_can_act,
         )
 
-        # 2. Assigned to + Decision time (side-by-side)
+        # 2. Assigned To + Decision Time (labels also BIG + BOLD)
         col1, col2 = st.columns(2)
+
         with col1:
             assigned_to = st.text_input(
                 "Assign to (email or name)",
                 value=str(t_row.get(meta.get("assigned_to", ""), "")),
                 disabled=not role_can_act,
             )
+
         with col2:
             when = st.text_input(
                 "Decision time",
@@ -133,43 +128,30 @@ else:
                 disabled=not role_can_act,
             )
 
-        # 3. Comments / Rationale
+        # 3. Comments / Rationale (label BIG + BOLD)
         comment = st.text_area(
             "Comments / Rationale",
             placeholder="Add comments for audit trail (optional)",
             disabled=not role_can_act,
         )
 
-        # 4. Buttons – grouped together, right side, close to each other
+        # 4. Buttons (right-aligned, close together)
         spacer, col_buttons = st.columns([0.6, 0.4])
-        b_reset, b_submit = col_buttons.columns([0.5, 0.5])
+        b_reset, b_submit = col_buttons.columns([0.48, 0.52])
 
         with b_reset:
-            cancel = st.form_submit_button(
-                "Reset form",
-                disabled=not role_can_act,
-            )
+            cancel = st.form_submit_button("Reset form", disabled=not role_can_act)
 
         with b_submit:
-            submitted = st.form_submit_button(
-                "Submit decision",
-                disabled=not role_can_act,
-            )
+            submitted = st.form_submit_button("Submit decision", disabled=not role_can_act)
 
     # =====================================================
-    # BACKEND LOGIC AFTER SUBMISSION
+    # BACKEND SUBMISSION LOGIC
     # =====================================================
     if submitted:
         if not role_can_act:
             st.error("You are not authorised to perform this action.")
             st.stop()
-
-        if t_row.empty:
-            tracker_df = pd.concat(
-                [tracker_df, pd.DataFrame([{"Sanction_ID": sid}])],
-                ignore_index=True,
-            )
-            t_row = tracker_df.loc[tracker_df["Sanction_ID"] == sid].iloc[0]
 
         tracker_df = _ensure_tracker_columns(tracker_df)
         mask = tracker_df["Sanction_ID"] == sid
@@ -183,10 +165,10 @@ else:
         else:
             new_status = "Changes requested"
 
-        # Update DB fields
+        # Update fields
         tracker_df.loc[mask, meta["status"]] = new_status
         tracker_df.loc[mask, meta.get("assigned_to", "assigned_to")] = assigned_to
-        tracker_df.loc[mask, meta.get("decision_at", "decision_at")] = when or _now_iso()
+        tracker_df.loc[mask, meta.get("decision_at", "decision_at")] = when
         tracker_df.loc[mask, meta.get("comment", "comment")] = comment
 
         nxt = _next_stage(current_stage) if new_status == "Approved" else None
@@ -196,32 +178,20 @@ else:
             tracker_df.loc[mask, "Overall_status"] = "In progress"
             for stg, m in STAGE_KEYS.items():
                 tracker_df.loc[mask, m["flag"]] = (stg == nxt)
-
         elif new_status == "Rejected":
             tracker_df.loc[mask, "Overall_status"] = "Rejected"
-
         else:
             tracker_df.loc[mask, "Overall_status"] = "Changes requested"
 
-        try:
-            _write_csv(tracker_df, APPROVER_TRACKER_PATH)
-        except Exception as e:
-            st.error(f"Failed to update tracker: {e}")
-        else:
-            try:
-                if "Sanction ID" in sanctions_df.columns:
-                    ms = sanctions_df["Sanction ID"] == sid
+        # Save & sync to files
+        _write_csv(tracker_df, APPROVER_TRACKER_PATH)
 
-                    if "Current Stage" in sanctions_df.columns and "Current Stage" in tracker_df.columns:
-                        sanctions_df.loc[ms, "Current Stage"] = tracker_df.loc[mask, "Current Stage"].iloc[0]
+        if "Sanction ID" in sanctions_df.columns:
+            ms = sanctions_df["Sanction ID"] == sid
+            sanctions_df.loc[ms, "Current Stage"] = tracker_df.loc[mask, "Current Stage"].iloc[0]
+            sanctions_df.loc[ms, "Status"] = tracker_df.loc[mask, "Overall_status"].iloc[0]
+            _write_csv(sanctions_df, SANCTIONS_PATH)
 
-                    if "Status" in sanctions_df.columns and "Overall_status" in tracker_df.columns:
-                        sanctions_df.loc[ms, "Status"] = tracker_df.loc[mask, "Overall_status"].iloc[0]
-
-                    _write_csv(sanctions_df, SANCTIONS_PATH)
-            except Exception as e:
-                st.warning(f"Could not update sanctions DB: {e}")
-
-            st.success(f"Decision saved: **{new_status}**")
-            st.toast("Updated successfully ✔️")
-            st.rerun()
+        st.success(f"Decision saved: **{new_status}**")
+        st.toast("Updated successfully ✔️")
+        st.rerun()
