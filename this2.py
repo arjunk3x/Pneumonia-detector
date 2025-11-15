@@ -4,14 +4,19 @@
 
 st.markdown(
     f"""
-**Stage Actions – {current_stage}**
-
-<span style="color:#6c757d;">
-Current status: <span class="badge {_pill_class(str(t_row.get(STAGE_KEYS.get(current_stage, {}).get("status", ""), "Pending")))}">
-{str(t_row.get(STAGE_KEYS.get(current_stage, {}).get("status", ""), "Pending"))}
-</span>
-</span>
-""",
+    <div style="margin-bottom:10px;">
+        <span style="font-size:1.5rem; font-weight:700;">
+            Stage Actions – {current_stage}
+        </span>
+        <br>
+        <span style="color:#6c757d; font-size:1rem;">
+            Current status:
+            <span class="badge {_pill_class(existing_status)}">
+                {existing_status}
+            </span>
+        </span>
+    </div>
+    """,
     unsafe_allow_html=True,
 )
 
@@ -160,3 +165,4 @@ else:
             st.rerun()
 
     st.markdown("</div>", unsafe_allow_html=True)
+
