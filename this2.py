@@ -135,4 +135,28 @@ with right:
         st.markdown(button_html, unsafe_allow_html=True)
 
         # Close outer panel div
-        st.markdown("</div>", unsafe_allow_html=True)
+        st.markdown("</div>", unsafe_allow_html=True)\
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+        st.markdown(
+            """
+            <div class="attachments-panel-header">
+                <div class="attachments-panel-icon">PDF</div>
+                <div class="attachments-panel-title">Sanction Document View</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
