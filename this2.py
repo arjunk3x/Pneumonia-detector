@@ -1,162 +1,249 @@
-# -------------------- ATTACHMENTS PANEL --------------------
-with right:
-    st.markdown("<h3 style='font-weight:700;'>Attachments</h3>", unsafe_allow_html=True)
+# ==============================
+# FEEDBACK HEADER + KPIs SECTION
+# ==============================
 
-    atts = s_row.get("Attachments", "")
+project_title = s_row.get("Project_Title", s_row.get("ART/Delivery Vehicle", "Untitled"))
+art_vehicle   = s_row.get("ART/Delivery Vehicle", "-")
+sponsor       = s_row.get("Sponsor", "-")
+amount        = _fmt_money(
+    s_row.get("Amount", t_row.get("Value", None)),
+    t_row.get("Currency", "USD"),
+)
+overall       = s_row.get("Status", t_row.get("overall_status", "In progress"))
 
-    if pd.isna(atts) or str(atts).strip() == "":
-        st.info("No attachments uploaded.")
-    else:
-        # Use first attachment as the main sanction PDF
-        items = [a.strip() for a in str(atts).replace(";", ",").split(",") if a.strip()]
-        main_name = items[0]              # e.g. "SanctionDocument.pdf"
-        pdf_name = Path(main_name)
+submitted  = str(s_row.get("Submitted",  t_row.get("Submitted_at", "-")))
+requester  = str(t_row.get("Requester_Email", "-"))
+department = str(t_row.get("Department", "-"))
+risk_level = str(t_row.get("Risk_Level", "-"))
 
-        # Open the outer panel
-        st.markdown(
-            """
-            <div style="
-                background:#ffffff;
-                border:1px solid #e5e7eb;
-                border-radius:12px;
-                padding:1.2rem 1.4rem;
-                margin-top:0.5rem;
-                box-shadow:0 1px 2px rgba(0,0,0,0.06);
-            ">
-            """,
-            unsafe_allow_html=True,
-        )
+st.markdown(
+    f"""
+<style>
+/* === local styling only for this section (all prefixed with initial-) === */
 
-        # ---- Header: icon + title ----
-        st.markdown(
-            """
-            <div style="display:flex; align-items:center; gap:0.6rem; margin-bottom:0.8rem;">
-                <div style="
-                    background:#ef4444;
-                    color:#ffffff;
-                    padding:0.35rem 0.55rem;
-                    border-radius:6px;
-                    font-weight:700;
-                    font-size:0.75rem;
-                    font-family:Inter, system-ui, sans-serif;
-                ">
-                    PDF
-                </div>
-                <div style="
-                    font-size:1.05rem;
-                    font-weight:700;
-                    color:#374151;
-                    font-family:Inter, system-ui, sans-serif;
-                ">
-                    Sanction Document View
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+.initial-feedback-wrapper {{
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #222222;
+  font-size: 14px;
+}}
 
-        # ---- PREVIEW IMAGE ----
-        preview_path = Path("assets/previews") / (pdf_name.stem + ".png")
+.initial-header-card {{
+  background: #ffe7d6;
+  border-radius: 18px;
+  padding: 20px 24px;
+  margin-bottom: 18px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}}
 
-        if preview_path.exists():
-            st.image(str(preview_path), use_container_width=True)
-        else:
-            st.markdown(
-                """
-                <div style="
-                    height:230px;
-                    border-radius:10px;
-                    border:1px solid #e5e7eb;
-                    background:linear-gradient(180deg,#ffffff 0%,#f1f5f9 100%);
-                    display:flex;
-                    align-items:center;
-                    justify-content:center;
-                    color:#6b7280;
-                    font-size:0.9rem;
-                ">
-                    Document preview not available
-                </div>
-                """,
-                unsafe_allow_html=True,
-            )
+.initial-header-left-eyebrow {{
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: #666666;
+  margin-bottom: 4px;
+}}
 
-        # ---- Caption ----
-        st.markdown(
-            """
-            <div style="
-                margin-top:0.6rem;
-                color:#6b7280;
-                font-size:0.85rem;
-                font-family:Inter, system-ui, sans-serif;
-            ">
-                The official sanction document is available for viewing and download.
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+.initial-header-title {{
+  font-size: 26px;
+  font-weight: 600;
+  margin: 0;
+}}
 
-        # ---- LOAD REAL PDF BYTES ----
-        try:
-            pdf_path = Path("assets/attachments") / main_name
-            file_bytes = pdf_path.read_bytes()
-        except Exception:
-            file_bytes = main_name.encode("utf-8")  # fallback so the app doesn't crash
+.initial-header-subrow {{
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #555555;
+}}
 
-        # Encode PDF bytes as base64 for HTML download link
-        b64 = base64.b64encode(file_bytes).decode()
-        download_href = f"data:application/pdf;base64,{b64}"
+.initial-codechip {{
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  background: #ffffffaa;
+  border: 1px solid #ffffffcc;
+}}
 
-        # ---- RIGHT-ALIGNED STYLED PDF BUTTON ----
-        button_html = f"""
-        <div style="display:flex; justify-content:flex-end; margin-top:1.1rem;">
-            <a href="{download_href}" download="{main_name}" style="text-decoration:none;">
-                <button style="
-                    background-color:#A3ACF3;
-                    color:#ffffff;
-                    border:none;
-                    border-radius:999px;
-                    padding:0.55rem 1.7rem;
-                    font-size:0.92rem;
-                    font-weight:600;
-                    font-family:Inter, system-ui, sans-serif;
-                    box-shadow:0 2px 4px rgba(0,0,0,0.15);
-                    cursor:pointer;
-                    display:flex;
-                    align-items:center;
-                    gap:0.4rem;
-                ">
-                    <span>📄</span>
-                    <span>Download Sanction PDF</span>
-                </button>
-            </a>
-        </div>
-        """
+.initial-stage-chip {{
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  background: #ffffffaa;
+  border: 1px solid #ffffffcc;
+}}
 
-        st.markdown(button_html, unsafe_allow_html=True)
+.initial-details-block {{
+  margin-bottom: 18px;
+}}
 
-        # Close outer panel div
-        st.markdown("</div>", unsafe_allow_html=True)\
+.initial-detail-row {{
+  display: grid;
+  grid-template-columns: 1fr;
+  row-gap: 4px;
+}}
 
+.initial-detail-field {{
+  margin-bottom: 6px;
+}}
 
+.initial-detail-label {{
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: #777777;
+  margin-bottom: 2px;
+}}
 
+.initial-detail-value {{
+  font-size: 14px;
+  font-weight: 500;
+}}
 
+.initial-kpi-grid {{
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+  margin: 8px 0 18px 0;
+}}
 
+.initial-kpi-card {{
+  border-radius: 14px;
+  padding: 12px 16px;
+  border: 1px solid #f4d7c5;
+  background: #fff7f1;
+}}
 
+.initial-kpi-card-green {{
+  background: #e6f7ea;
+  border-color: #b9e3c4;
+}}
 
+.initial-kpi-label {{
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .12em;
+  color: #777777;
+  margin-bottom: 6px;
+}}
 
+.initial-kpi-value {{
+  font-size: 14px;
+  font-weight: 500;
+}}
 
+.initial-pill {{
+  display: inline-block;
+  margin-top: 6px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  border: 1px solid transparent;
+}}
 
+.initial-pill-in-progress {{
+  background: #bbf7d0;
+  border-color: #4ade80;
+  color: #166534;
+}}
 
+.initial-meta-grid {{
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 12px;
+}}
 
+.initial-meta-card {{
+  border-radius: 10px;
+  padding: 10px 14px;
+  border: 1px solid #e5e7eb;
+  background: #ffffff;
+}}
+</style>
 
+<div class="initial-feedback-wrapper">
 
-        st.markdown(
-            """
-            <div class="attachments-panel-header">
-                <div class="attachments-panel-icon">PDF</div>
-                <div class="attachments-panel-title">Sanction Document View</div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+  <!-- HEADER STRIP -->
+  <div class="initial-header-card">
+    <div>
+      <div class="initial-header-left-eyebrow">Project Page</div>
+      <h1 class="initial-header-title">{project_title}</h1>
+      <div class="initial-header-subrow">
+        <span>Sanction</span>
+        <span class="initial-codechip">{sid}</span>
+      </div>
+    </div>
+    <div class="initial-stage-chip">Stage {current_stage}</div>
+  </div>
 
+  <!-- TOP DETAILS (ART, Sponsor, Amount) -->
+  <div class="initial-details-block">
+    <div class="initial-detail-row">
+      <div class="initial-detail-field">
+        <div class="initial-detail-label">ART/Delivery Vehicle</div>
+        <div class="initial-detail-value">{art_vehicle}</div>
+      </div>
+      <div class="initial-detail-field">
+        <div class="initial-detail-label">Sponsor</div>
+        <div class="initial-detail-value">{sponsor}</div>
+      </div>
+      <div class="initial-detail-field">
+        <div class="initial-detail-label">Amount</div>
+        <div class="initial-detail-value">{amount}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- KPI CARDS ROW (like screenshot) -->
+  <div class="initial-kpi-grid">
+    <div class="initial-kpi-card">
+      <div class="initial-kpi-label">Amount</div>
+      <div class="initial-kpi-value">{amount}</div>
+      <div class="initial-pill">In progress</div>
+    </div>
+
+    <div class="initial-kpi-card initial-kpi-card-green">
+      <div class="initial-kpi-label">Overall Status</div>
+      <div class="initial-kpi-value">{overall}</div>
+      <div class="initial-pill initial-pill-in-progress">{overall}</div>
+    </div>
+
+    <div class="initial-kpi-card">
+      <div class="initial-kpi-label">Overall Status</div>
+      <div class="initial-kpi-value">{overall}</div>
+      <div class="initial-pill">In progress</div>
+    </div>
+  </div>
+
+  <!-- META ROW (Submitted / Requester / Department / Risk Level) -->
+  <div class="initial-meta-grid">
+    <div class="initial-meta-card">
+      <div class="initial-kpi-label">Submitted</div>
+      <div class="initial-kpi-value">{submitted}</div>
+    </div>
+    <div class="initial-meta-card">
+      <div class="initial-kpi-label">Requester</div>
+      <div class="initial-kpi-value">{requester}</div>
+    </div>
+    <div class="initial-meta-card">
+      <div class="initial-kpi-label">Department</div>
+      <div class="initial-kpi-value">{department}</div>
+    </div>
+    <div class="initial-meta-card">
+      <div class="initial-kpi-label">Risk Level</div>
+      <div class="initial-kpi-value">{risk_level}</div>
+    </div>
+  </div>
+
+</div>
+""",
+    unsafe_allow_html=True,
+)
+
+st.divider()
