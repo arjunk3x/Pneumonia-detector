@@ -1,146 +1,162 @@
-/* ===== Attachments – Sanction Document View Card ===== */
+st.markdown("""
+<style>
 
 .attachments-panel {
-    margin-top: 0.5rem;
     background: #ffffff;
-    border-radius: 16px;
-    box-shadow: 0 1px 4px rgba(15, 23, 42, 0.10);
-    padding: 1rem 1.25rem 1.1rem;
+    border: 1px solid #e5e7eb;
+    border-radius: 12px;
+    padding: 1.2rem 1.4rem;
+    margin-top: 0.5rem;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.06);
 }
 
+/* Header of the attachments card */
 .attachments-panel-header {
     display: flex;
     align-items: center;
-    gap: 0.65rem;
-    margin-bottom: 0.75rem;
+    gap: 0.60rem;
+    margin-bottom: 0.8rem;
 }
 
+/* PDF icon */
 .attachments-panel-icon {
-    width: 32px;
-    height: 32px;
-    border-radius: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    font-size: 1rem;
-    font-weight: 600;
-    background: #E74C3C;        /* red PDF-style icon */
-    color: #ffffff;
+    background-color: #ef4444;
+    color: white;
+    padding: 0.35rem 0.55rem;
+    border-radius: 6px;
+    font-weight: 700;
+    font-size: 0.75rem;
+    font-family: 'Inter', sans-serif;
 }
 
+/* Title */
 .attachments-panel-title {
     font-size: 1.05rem;
-    font-weight: 600;
+    font-weight: 700;
+    color: #374151;
+    font-family: 'Inter', sans-serif;
 }
 
-.attachments-panel-body {
-    background: #F8FAFC;        /* light grey/blue content area */
-    border-radius: 12px;
-    padding: 0.85rem;
-    text-align: center;
-    margin-bottom: 0.75rem;
-}
-
-/* Placeholder for preview text/image caption */
+/* Caption under preview */
 .attachments-panel-caption {
-    margin-top: 0.55rem;
-    font-size: 0.85rem;
+    margin-top: 0.60rem;
     color: #6b7280;
+    font-size: 0.85rem;
+    font-family: 'Inter', sans-serif;
 }
 
-/* Full-width download button inside the card */
-.download-pdf-btn button {
-    width: 100% !important;
-    background-color: #A3ACF3 !important;   /* pastel periwinkle */
-    color: #ffffff !important;
-    border-radius: 999px !important;
+/* Footer: aligns the PDF button to the right */
+.attachments-panel-footer {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 1.2rem;
+}
+
+/* Styled PDF button wrapper */
+.pdf-download-btn button {
+    background-color: #A3ACF3 !important;           /* pastel periwinkle */
+    color: white !important;
+    border-radius: 999px !important;                /* pill button */
     border: none !important;
-    padding: 0.6rem 1.4rem !important;
+    padding: 0.55rem 1.6rem !important;
+    font-size: 0.92rem !important;
     font-weight: 600 !important;
-    font-size: 0.95rem !important;
+    font-family: 'Inter', sans-serif !important;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.15);
     cursor: pointer !important;
+    transition: 0.12s ease;
 }
 
+/* Hover effect */
+.pdf-download-btn button:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 4px 10px rgba(0,0,0,0.18);
+}
+
+</style>
+""", unsafe_allow_html=True)
 
 
 # ---------- RIGHT: ATTACHMENTS – Sanction Document View ----------
-# ---------- RIGHT: ATTACHMENTS – Sanction Document View ----------
+# -------------------- ATTACHMENTS PANEL --------------------
 with right:
-    st.markdown(
-        '<h3 style="font-weight:700; margin-bottom:0.5rem;">Attachments</h3>',
-        unsafe_allow_html=True,
-    )
+    st.markdown("<h3 style='font-weight:700;'>Attachments</h3>", unsafe_allow_html=True)
 
     atts = s_row.get("Attachments", "")
 
     if pd.isna(atts) or str(atts).strip() == "":
         st.info("No attachments uploaded.")
     else:
-        # Parse the attachments list
+        # Use first item only
         items = [a.strip() for a in str(atts).replace(";", ",").split(",") if a.strip()]
-        main_name = items[0]                                  # use first document
+        main_name = items[0]              # e.g. "SanctionDocument.pdf"
+        pdf_name = Path(main_name)
 
-        # Start the panel
+        st.markdown('<div class="attachments-panel">', unsafe_allow_html=True)
+
+        # ---- Header with icon + title ----
         st.markdown(
-            f"""
-                <div class="attachments-panel">
-                    <div class="attachments-panel-header">
-                        <div class="attachments-panel-icon">PDF</div>
-                        <div class="attachments-panel-title">Sanction Document View</div>
-                    </div>
+            """
+            <div class="attachments-panel-header">
+                <div class="attachments-panel-icon">PDF</div>
+                <div class="attachments-panel-title">Sanction Document View</div>
+            </div>
             """,
             unsafe_allow_html=True,
         )
 
-        # --- PDF PREVIEW (optional but recommended) ---
-        # Path where preview images would exist (PNG/JPG)
-        preview_path = f"assets/previews/{main_name.replace('.pdf', '.png')}"
+        # ---- PREVIEW IMAGE (OPTIONAL) ----
+        preview_path = Path("assets/previews") / (pdf_name.stem + ".png")
 
-        if os.path.exists(preview_path):
-            st.image(preview_path, use_column_width=True)
+        if preview_path.exists():
+            st.image(str(preview_path), use_container_width=True)
         else:
-            # Placeholder box
             st.markdown(
                 """
-                <div class="attachments-panel-body">
-                    <div style="height:220px; border-radius:8px; border:1px solid #e5e7eb; 
-                                background:linear-gradient(180deg,#ffffff 0%,#f1f5f9 100%);
-                                display:flex; align-items:center; justify-content:center;
-                                font-size:0.85rem; color:#6b7280;">
-                        Document preview not available
-                    </div>
+                <div style="
+                    height:230px;
+                    border-radius:10px;
+                    border:1px solid #e5e7eb;
+                    background:linear-gradient(180deg,#ffffff 0%,#f1f5f9 100%);
+                    display:flex;
+                    align-items:center;
+                    justify-content:center;
+                    color:#6b7280;
+                    font-size:0.9rem;">
+                    Document preview not available
+                </div>
                 """,
                 unsafe_allow_html=True,
             )
 
-        # Caption
+        # ---- Caption ----
         st.markdown(
             """
             <div class="attachments-panel-caption">
                 The official sanction document is available for viewing and download.
             </div>
-            </div> <!-- end attachments-panel-body -->
             """,
             unsafe_allow_html=True,
         )
 
-        # --- REAL PDF DOWNLOAD ---
-        st.markdown('<div class="download-pdf-btn">', unsafe_allow_html=True)
+        # ---- PDF DOWNLOAD BUTTON (RIGHT ALIGNED) ----
+        st.markdown('<div class="attachments-panel-footer pdf-download-btn">', unsafe_allow_html=True)
 
+        # Try loading PDF
         try:
             pdf_path = Path("assets/attachments") / main_name
             file_bytes = pdf_path.read_bytes()
-        except Exception:
-            file_bytes = main_name.encode("utf-8")  # fallback
+        except:
+            file_bytes = main_name.encode("utf-8")
 
         st.download_button(
-            label="Download Sanction PDF",
+            label="📄 Download Sanction PDF",
             data=file_bytes,
             file_name=main_name,
-            key=f"download_{sid}",
+            key=f"download_pdf_{sid}",
         )
 
-        # Close wrapper
         st.markdown("</div></div>", unsafe_allow_html=True)
+
 
 
