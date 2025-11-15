@@ -1,3 +1,10 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+html, body, [class*="css"] {
+    font-family: 'Inter', sans-serif !important;
+}
+
+
 /* ===== Details table styling ===== */
 .details-card {
     margin-top: 0.5rem;
@@ -160,3 +167,4 @@ with right:
         st.markdown('</div>', unsafe_allow_html=True)
 
 st.divider()
+
