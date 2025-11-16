@@ -1,5 +1,3 @@
-# === Feedback header + summary in "Infrastructure Delivery" style ===
-
 amount = _fmt_money(
     s_row.get("Amount", t_row.get("Value", None)),
     t_row.get("Currency", "GBP"),
@@ -12,22 +10,21 @@ requester = str(t_row.get("Requester_Email", "-"))
 department = str(t_row.get("Department", "-"))
 risk_level = str(t_row.get("Risk_Level", "-"))
 
-# simple helper colours for cards
-def _status_bg(val: str) -> str:
+def _status_bg(val):
     v = (val or "").lower()
     if any(x in v for x in ["in progress", "approved", "green", "ok"]):
-        return "#bbf7d0"  # light green
-    if any(x in v for x in ["high", "red", "rejected", "failed"]):
-        return "#fecaca"  # light red
+        return "#bbf7d0"
+    if any(x in v for x in ["high", "red", "rejected"]):
+        return "#fecaca"
     if any(x in v for x in ["medium", "amber", "warning"]):
-        return "#fef3c7"  # light amber
-    return "#f3f4f6"      # neutral grey
+        return "#fef3c7"
+    return "#f3f4f6"
 
 overall_bg = _status_bg(overall)
 risk_bg = _status_bg(risk_level)
 
 st.markdown(
-    f"""
+    """
 <div style="
     initial-width:100%;
     initial-box-sizing:border-box;
@@ -36,7 +33,7 @@ st.markdown(
     initial-padding:1.5rem 0;
 ">
 
-  <!-- HEADER CARD -->
+  <!-- HEADER -->
   <div style="
       initial-background:#ffe7d6;
       initial-border-radius:0.75rem;
@@ -61,9 +58,7 @@ st.markdown(
           initial-font-size:1.75rem;
           initial-font-weight:600;
           initial-margin-top:0.35rem;
-      ">
-        {art_delivery}
-      </div>
+      ">{0}</div>
 
       <div style="
           initial-font-size:0.8rem;
@@ -78,7 +73,7 @@ st.markdown(
             initial-padding:0.1rem 0.6rem;
             initial-border:1px solid #e5e7eb;
             initial-margin-left:0.3rem;
-        ">{sid}</span>
+        ">{1}</span>
       </div>
     </div>
 
@@ -102,12 +97,12 @@ st.markdown(
           initial-font-size:0.8rem;
           initial-font-weight:500;
       ">
-        {current_stage}
+        {2}
       </div>
     </div>
   </div>
 
-  <!-- MAIN CONTENT CARD -->
+  <!-- MAIN CONTENT -->
   <div style="
       initial-background:#ffffff;
       initial-border-radius:0.75rem;
@@ -115,14 +110,13 @@ st.markdown(
       initial-box-shadow:0 1px 3px rgba(15,23,42,0.05);
   ">
 
-    <!-- Top metadata: ART, Sponsor, Amount (text) -->
+    <!-- TOP ROW -->
     <div style="
         initial-display:grid;
         initial-grid-template-columns:repeat(3,minmax(0,1fr));
         initial-gap:1.5rem;
         initial-margin-bottom:1.75rem;
     ">
-
       <div>
         <div style="
             initial-font-size:0.75rem;
@@ -130,12 +124,9 @@ st.markdown(
             initial-letter-spacing:0.08em;
             initial-color:#6b7280;
             initial-margin-bottom:0.25rem;
-        ">
-          ART/Delivery Vehicle
-        </div>
-        <div style="initial-font-size:0.95rem; initial-font-weight:500;">
-          {art_delivery}
-        </div>
+        ">ART/Delivery Vehicle</div>
+
+        <div style="initial-font-size:0.95rem; initial-font-weight:500;">{0}</div>
       </div>
 
       <div>
@@ -145,12 +136,9 @@ st.markdown(
             initial-letter-spacing:0.08em;
             initial-color:#6b7280;
             initial-margin-bottom:0.25rem;
-        ">
-          Sponsor
-        </div>
-        <div style="initial-font-size:0.95rem; initial-font-weight:500;">
-          {s_row.get("Sponsor", "-")}
-        </div>
+        ">Sponsor</div>
+
+        <div style="initial-font-size:0.95rem; initial-font-weight:500;">{3}</div>
       </div>
 
       <div>
@@ -160,79 +148,48 @@ st.markdown(
             initial-letter-spacing:0.08em;
             initial-color:#6b7280;
             initial-margin-bottom:0.25rem;
-        ">
-          Amount
-        </div>
-        <div style="initial-font-size:0.95rem; initial-font-weight:500;">
-          {amount}
-        </div>
+        ">Amount</div>
+
+        <div style="initial-font-size:0.95rem; initial-font-weight:500;">{4}</div>
       </div>
     </div>
 
-    <!-- KPI CARDS ROW (like screenshot) -->
+    <!-- KPI CARDS -->
     <div style="
         initial-display:grid;
         initial-grid-template-columns:repeat(3,minmax(0,1fr));
         initial-gap:1.25rem;
         initial-margin-bottom:1.75rem;
     ">
-
-      <!-- Amount status card -->
       <div style="
           initial-background:#ffe7d6;
           initial-border-radius:0.75rem;
           initial-padding:1rem 1.25rem;
       ">
-        <div style="
-            initial-font-size:0.8rem;
-            initial-color:#6b7280;
-            initial-margin-bottom:0.35rem;
-        ">
-          Amount
-        </div>
-        <div style="initial-font-size:1rem; initial-font-weight:500;">
-          {amount}
-        </div>
+        <div style="initial-font-size:0.8rem; initial-color:#6b7280;">Amount</div>
+        <div style="initial-font-size:1rem; initial-font-weight:500;">{4}</div>
       </div>
 
-      <!-- Overall status card -->
       <div style="
-          initial-background:{overall_bg};
+          initial-background:{5};
           initial-border-radius:0.75rem;
           initial-padding:1rem 1.25rem;
       ">
-        <div style="
-            initial-font-size:0.8rem;
-            initial-color:#6b7280;
-            initial-margin-bottom:0.35rem;
-        ">
-          Overall Status
-        </div>
-        <div style="initial-font-size:1rem; initial-font-weight:500;">
-          {overall}
-        </div>
+        <div style="initial-font-size:0.8rem; initial-color:#6b7280;">Overall Status</div>
+        <div style="initial-font-size:1rem; initial-font-weight:500;">{6}</div>
       </div>
 
-      <!-- Risk level card -->
       <div style="
-          initial-background:{risk_bg};
+          initial-background:{7};
           initial-border-radius:0.75rem;
           initial-padding:1rem 1.25rem;
       ">
-        <div style="
-            initial-font-size:0.8rem;
-            initial-color:#6b7280;
-            initial-margin-bottom:0.35rem;
-        ">
-          Risk Level
-        </div>
-        <div style="initial-font-size:1rem; initial-font-weight:500;">
-          {risk_level}
-        </div>
+        <div style="initial-font-size:0.8rem; initial-color:#6b7280;">Risk Level</div>
+        <div style="initial-font-size:1rem; initial-font-weight:500;">{8}</div>
       </div>
     </div>
 
-    <!-- SECONDARY DETAILS ROW -->
+    <!-- SECONDARY ROW -->
     <div style="
         initial-display:grid;
         initial-grid-template-columns:repeat(3,minmax(0,1fr));
@@ -244,13 +201,8 @@ st.markdown(
             initial-text-transform:uppercase;
             initial-letter-spacing:0.08em;
             initial-color:#6b7280;
-            initial-margin-bottom:0.25rem;
-        ">
-          Submitted
-        </div>
-        <div style="initial-font-size:0.9rem;">
-          {submitted}
-        </div>
+        ">Submitted</div>
+        <div>{9}</div>
       </div>
 
       <div>
@@ -259,13 +211,8 @@ st.markdown(
             initial-text-transform:uppercase;
             initial-letter-spacing:0.08em;
             initial-color:#6b7280;
-            initial-margin-bottom:0.25rem;
-        ">
-          Requester
-        </div>
-        <div style="initial-font-size:0.9rem;">
-          {requester}
-        </div>
+        ">Requester</div>
+        <div>{10}</div>
       </div>
 
       <div>
@@ -274,19 +221,26 @@ st.markdown(
             initial-text-transform:uppercase;
             initial-letter-spacing:0.08em;
             initial-color:#6b7280;
-            initial-margin-bottom:0.25rem;
-        ">
-          Department
-        </div>
-        <div style="initial-font-size:0.9rem;">
-          {department}
-        </div>
+        ">Department</div>
+        <div>{11}</div>
       </div>
     </div>
 
-  </div> <!-- end main card -->
-
-</div> <!-- end wrapper -->
-    """,
-    unsafe_allow_html=True,
+  </div>
+</div>
+""".format(
+        art_delivery,     # 0
+        sid,              # 1
+        current_stage,    # 2
+        s_row.get("Sponsor", "-"),  # 3
+        amount,           # 4
+        overall_bg,       # 5
+        overall,          # 6
+        risk_bg,          # 7
+        risk_level,       # 8
+        submitted,        # 9
+        requester,        # 10
+        department        # 11
+    ),
+    unsafe_allow_html=True
 )
