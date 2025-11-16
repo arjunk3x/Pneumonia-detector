@@ -1,110 +1,66 @@
-/* =============  GLOBAL RESET / BASE  ============= */
-body {
-    font-family: "Inter", sans-serif;
-}
-
-/* =============  SECTION WRAPPER  ============= */
-.pending-wrapper {
-    background: #f4f8ff;       /* very soft blue background */
-    border-radius: 18px;
-    padding: 20px 26px;
-    border: 1px solid #d9e6ff;
-    box-shadow: 0 4px 14px rgba(20, 60, 120, 0.08);
-    margin-bottom: 22px;
-}
-
-/* =============  HEADERS (DARK BLUE)  ============= */
-.section-title {
-    font-size: 1.6rem;
-    font-weight: 700;
-    padding: 14px 18px;
-    background: #003366;       /* dark navy blue */
-    color: white;              /* white text */
-    border-radius: 10px;
-    margin-bottom: 10px;
-    letter-spacing: 0.4px;
-}
-
-.section-subtitle {
-    font-size: 1rem;
-    color: #0f1c33;            /* deep grey-blue */
-    margin-bottom: 14px;
-}
-
-/* =============  FILTER LABELS  ============= */
-.filter-help {
-    font-size: 0.9rem;
-    color: #3b5b8f;
-    font-weight: 500;
-    margin-top: 4px;
-    margin-bottom: 8px;
-}
-
-/* ============= PASTEL DATA EDITOR (TABLE) ============= */
-[data-testid="stDataFrame"], 
-[data-testid="stDataEditor"] {
-    background: white !important;
-    border-radius: 12px;
-    border: 1px solid #c7d9ff;
-    box-shadow: 0 2px 10px rgba(40, 80, 140, 0.10);
-}
-
-/* Table Header */
-[data-testid="stDataFrame"] thead tr th,
-[data-testid="stDataEditor"] thead tr th {
+/* ===========================
+   HEADER BAR (Dark Blue)
+   =========================== */
+[data-testid="stDataFrame"] thead th,
+[data-testid="stDataEditor"] thead th {
+    background-color: #1f3a65 !important;    /* dark navy blue */
+    color: white !important;
     font-weight: 700 !important;
-    background: #e7f0ff !important;   /* light sky blue */
-    color: #003366 !important;
-    border-bottom: 2px solid #b8ceff !important;
-    text-transform: uppercase;
-    font-size: 0.85rem;
+    font-size: 0.92rem !important;
+    padding: 10px 6px !important;
+    border-bottom: 2px solid #102544 !important;
 }
 
-/* Table Rows */
-[data-testid="stDataFrame"] tbody tr,
-[data-testid="stDataEditor"] tbody tr {
-    transition: background 0.20s ease, transform 0.10s ease;
-    font-size: 0.94rem;
+/* ===========================
+   ALTERNATING ROW COLORS
+   =========================== */
+[data-testid="stDataFrame"] tbody tr:nth-child(odd),
+[data-testid="stDataEditor"] tbody tr:nth-child(odd) {
+    background-color: #f7f8fb !important;    /* light grey-white */
 }
 
-/* Hover Effect */
-[data-testid="stDataFrame"] tbody tr:hover,
-[data-testid="stDataEditor"] tbody tr:hover {
-    background: #eef5ff !important;
-    cursor: pointer;
-    transform: scale(1.002);
+[data-testid="stDataFrame"] tbody tr:nth-child(even),
+[data-testid="stDataEditor"] tbody tr:nth-child(even) {
+    background-color: #eef4ff !important;    /* very soft blue */
 }
 
-/* Table Cell Text */
+/* Highlight specific rows (optional, matches screenshot) */
+.highlight-yellow {
+    background-color: #f7f1d1 !important;    /* pale cream */
+}
+
+.highlight-blue {
+    background-color: #d6e4ff !important;    /* soft blue section */
+}
+
+/* ===========================
+   TABLE BORDERS & TEXT
+   =========================== */
 [data-testid="stDataFrame"] td,
 [data-testid="stDataEditor"] td {
-    color: #0d2247 !important;        /* dark blue text */
-    padding: 8px 6px !important;
-    border-bottom: 1px solid #dce7ff !important;
+    color: #2b3b57 !important;
+    font-size: 0.93rem !important;
+    padding: 8px 10px !important;
+    border-bottom: 1px solid #d8e2f2 !important;
 }
 
-/* Risk badges inside cell text */
-.badge-high {
-    color: #e53935;
-    font-weight: 700;
-}
-.badge-medium {
-    color: #fb8c00;
-    font-weight: 700;
-}
-.badge-low {
-    color: #43a047;
-    font-weight: 700;
+/* ===========================
+   HOVER EFFECT (matching example)
+   =========================== */
+[data-testid="stDataFrame"] tbody tr:hover,
+[data-testid="stDataEditor"] tbody tr:hover {
+    background-color: #dce9ff !important;   /* soft bright blue */
+    transition: background 0.15s ease-in-out;
+    cursor: pointer;
 }
 
-
-
-
-def risk_badge(v: str) -> str:
-    s = str(v).strip().lower()
-    if s == "high":
-        return '<span class="badge-high">🔴 High</span>'
-    if s == "low":
-        return '<span class="badge-low">🟢 Low</span>'
-    return '<span class="badge-medium">🟠 Medium</span>'
-
+/* ===========================
+   TABLE CONTAINER
+   =========================== */
+[data-testid="stDataFrame"],
+[data-testid="stDataEditor"] {
+    border: 1px solid #c7d3e8 !important;
+    border-radius: 10px;
+    overflow: hidden !important;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.05);
+}
