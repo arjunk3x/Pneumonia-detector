@@ -1,6 +1,5 @@
 def kpi_card(title, value, bg="#0A1A44", badge_bg="#0EA5E9", badge_color="#FFFFFF"):
-    st.markdown(
-        f"""
+    html = f"""
         <div style="
             background:{bg};
             border-radius:14px;
@@ -10,7 +9,6 @@ def kpi_card(title, value, bg="#0A1A44", badge_bg="#0EA5E9", badge_color="#FFFFF
             border:1px solid rgba(255,255,255,0.15);
             box-shadow:0 4px 10px rgba(0,0,0,0.15);
         ">
-            
             <div style="
                 font-size:36px;
                 font-weight:800;
@@ -30,11 +28,9 @@ def kpi_card(title, value, bg="#0A1A44", badge_bg="#0EA5E9", badge_color="#FFFFF
             ">
                 {title}
             </span>
-
         </div>
-        """,
-        unsafe_allow_html=True,
-    )
+    """
+    st.markdown(html, unsafe_allow_html=True)
 
 
 
@@ -61,3 +57,4 @@ with c4:
              bg="#0A1A44",
              badge_bg="#0EA5E9",     # aqua highlight
              badge_color="#FFFFFF")
+
