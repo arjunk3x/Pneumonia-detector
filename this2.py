@@ -1,63 +1,69 @@
-st.markdown(
-    """
-    <style>
-    .details-card {
-        width: 100%;
-        margin-top: 1rem;
-        font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    }
+/* ============================
+   DETAILS CARD CONTAINER
+============================ */
+.details-card {
+    margin-top: 0.5rem;
+    border-radius: 10px;
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(15, 23, 42, 0.08);
+    background: #ffffff;
+}
 
-    .details-card table {
-        width: 100%;
-        border-collapse: collapse;
-        font-size: 0.9rem;
-        border-radius: 0.6rem;
-        overflow: hidden;
-    }
+/* ============================
+   TABLE GENERAL
+============================ */
+.details-card table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.9rem;
+}
 
-    /* ===== HEADER (dark blue + white text) ===== */
-    .details-card thead th {
-        background: #1e3a8a;          /* dark blue header */
-        color: #ffffff;               /* white text in 'Field' and 'Value' */
-        padding: 0.55rem 0.75rem;
-        font-weight: 600;
-        text-align: left;
-    }
+/* ============================
+   TABLE HEADER (MAKE IT DARK BLUE + WHITE TEXT)
+============================ */
+.details-card thead th {
+    background: #0B1F4A !important;   /* Dark Navy Blue */
+    color: white !important;          /* White text */
+    padding: 0.55rem 0.75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
 
-    /* ===== BODY CELLS ===== */
-    .details-card tbody td {
-        padding: 0.45rem 0.75rem;
-        border-top: 1px solid #edf1f7;
-        color: #111827;
-        background: #ffffff;
-        transition: background-color 0.2s ease, color 0.2s ease;
-    }
+/* ============================
+   TABLE BODY CELLS
+============================ */
+.details-card tbody td {
+    padding: 0.45rem 0.75rem;
+    border-top: 1px solid #dfe3ef;
+    color: #111827;
+}
 
-    /* zebra striping for readability */
-    .details-card tbody tr:nth-child(even) td {
-        background: #f9fafb;
-    }
+/* Alternate row coloring */
+.details-card tbody tr:nth-child(even) {
+    background: #f8f9fc;
+}
 
-    /* ===== HOVER: ALL ROWS (blue tint + dark text) ===== */
-    .details-card tbody tr:hover td {
-        background: #e0edff;          /* light blue hover */
-        color: #111827;
-    }
+/* ============================
+   HIGHLIGHTED ROWS (Sponsor, Amount)
+============================ */
+.details-card tbody tr.highlight-row td {
+    background: #FFF7E0 !important;
+    font-weight: 600;
+}
 
-    /* ===== HIGHLIGHTED ROWS (Sponsor, Amount, etc.) ===== */
-    .details-card tbody tr.highlight-row td {
-        background: #bfdbfe !important;  /* soft blue base */
-        color: #111827 !important;
-        font-weight: 600;
-    }
+/* Hover effect for highlighted rows */
+.details-card tbody tr.highlight-row:hover td {
+    background: #FFE8B3 !important;
+    transition: 0.3s;
+}
 
-    /* Hover effect for highlighted rows: dark blue + white text */
-    .details-card tbody tr.highlight-row:hover td {
-        background: #1e40af !important;  /* darker blue on hover */
-        color: #ffffff !important;       /* white text on hover */
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
+/* ============================
+   NEW HOVER EFFECT FOR ALL ROWS
+   (Blue-white transition)
+============================ */
+.details-card tbody tr:hover td {
+    background: #E5EEFF !important;   /* Light soft blue */
+    color: #0B1F4A !important;         /* Navy text */
+    transition: all 0.25s ease;
+}
