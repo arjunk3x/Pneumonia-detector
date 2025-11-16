@@ -1,5 +1,5 @@
 # ==============================
-# FEEDBACK HEADER + KPIs SECTION
+# FEEDBACK HEADER + KPI SECTION
 # ==============================
 
 project_title = s_row.get("Project_Title", s_row.get("ART/Delivery Vehicle", "Untitled"))
@@ -15,6 +15,10 @@ submitted  = str(s_row.get("Submitted",  t_row.get("Submitted_at", "-")))
 requester  = str(t_row.get("Requester_Email", "-"))
 department = str(t_row.get("Department", "-"))
 risk_level = str(t_row.get("Risk_Level", "-"))
+
+overall_lower = str(overall).lower()
+pill_class = "initial-pill-in-progress" if overall_lower == "in progress" else "initial-pill-default"
+pill_html = f'<div class="initial-pill {pill_class}">{overall}</div>'
 
 st.markdown(
     f"""
@@ -77,32 +81,33 @@ st.markdown(
   border: 1px solid #ffffffcc;
 }}
 
+/* DETAILS SECTION */
+
 .initial-details-block {{
   margin-bottom: 18px;
+  max-width: 620px;
 }}
 
-.initial-detail-row {{
-  display: grid;
-  grid-template-columns: 1fr;
-  row-gap: 4px;
-}}
-
-.initial-detail-field {{
-  margin-bottom: 6px;
-}}
-
-.initial-detail-label {{
+.initial-details-label {{
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: .12em;
   color: #777777;
-  margin-bottom: 2px;
+  margin-bottom: 4px;
 }}
 
-.initial-detail-value {{
-  font-size: 14px;
-  font-weight: 500;
+.initial-details-value-main {{
+  font-size: 16px;
+  font-weight: 600;
+  margin-bottom: 6px;
 }}
+
+.initial-details-separator {{
+  border-bottom: 1px solid #e5e7eb;
+  margin: 8px 0 10px 0;
+}}
+
+/* KPI CARDS */
 
 .initial-kpi-grid {{
   display: grid;
@@ -139,7 +144,7 @@ st.markdown(
 .initial-pill {{
   display: inline-block;
   margin-top: 6px;
-  padding: 2px 10px;
+  padding: 3px 10px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 500;
@@ -151,6 +156,14 @@ st.markdown(
   border-color: #4ade80;
   color: #166534;
 }}
+
+.initial-pill-default {{
+  background: #e5e7eb;
+  border-color: #d1d5db;
+  color: #374151;
+}}
+
+/* META ROW */
 
 .initial-meta-grid {{
   display: grid;
@@ -182,46 +195,42 @@ st.markdown(
     <div class="initial-stage-chip">Stage {current_stage}</div>
   </div>
 
-  <!-- TOP DETAILS (ART, Sponsor, Amount) -->
+  <!-- TOP DETAILS: ART / SPONSOR / AMOUNT -->
   <div class="initial-details-block">
-    <div class="initial-detail-row">
-      <div class="initial-detail-field">
-        <div class="initial-detail-label">ART/Delivery Vehicle</div>
-        <div class="initial-detail-value">{art_vehicle}</div>
-      </div>
-      <div class="initial-detail-field">
-        <div class="initial-detail-label">Sponsor</div>
-        <div class="initial-detail-value">{sponsor}</div>
-      </div>
-      <div class="initial-detail-field">
-        <div class="initial-detail-label">Amount</div>
-        <div class="initial-detail-value">{amount}</div>
-      </div>
-    </div>
+    <div class="initial-details-label">ART/Delivery Vehicle</div>
+    <div class="initial-details-value-main">{art_vehicle}</div>
+    <div class="initial-details-separator"></div>
+
+    <div class="initial-details-label">Sponsor</div>
+    <div class="initial-details-value-main">{sponsor}</div>
+    <div class="initial-details-separator"></div>
+
+    <div class="initial-details-label">Amount</div>
+    <div class="initial-details-value-main">{amount}</div>
   </div>
 
-  <!-- KPI CARDS ROW (like screenshot) -->
+  <!-- KPI CARDS ROW -->
   <div class="initial-kpi-grid">
     <div class="initial-kpi-card">
       <div class="initial-kpi-label">Amount</div>
       <div class="initial-kpi-value">{amount}</div>
-      <div class="initial-pill">In progress</div>
+      <div class="initial-pill initial-pill-default">In progress</div>
     </div>
 
     <div class="initial-kpi-card initial-kpi-card-green">
       <div class="initial-kpi-label">Overall Status</div>
       <div class="initial-kpi-value">{overall}</div>
-      <div class="initial-pill initial-pill-in-progress">{overall}</div>
+      {pill_html}
     </div>
 
     <div class="initial-kpi-card">
       <div class="initial-kpi-label">Overall Status</div>
       <div class="initial-kpi-value">{overall}</div>
-      <div class="initial-pill">In progress</div>
+      <div class="initial-pill initial-pill-default">In progress</div>
     </div>
   </div>
 
-  <!-- META ROW (Submitted / Requester / Department / Risk Level) -->
+  <!-- META ROW -->
   <div class="initial-meta-grid">
     <div class="initial-meta-card">
       <div class="initial-kpi-label">Submitted</div>
