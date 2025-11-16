@@ -1,16 +1,15 @@
-st.markdown("""
 <style>
 
-/* ===============================
-   GLOBAL FONT
-   =============================== */
+/* =========================================================
+   GLOBAL BASE FONT
+   ========================================================= */
 body {
     font-family: "Inter", sans-serif;
 }
 
-/* ===============================
-   KEEP THESE → DO NOT RENAME
-   =============================== */
+/* =========================================================
+   KEEP THESE EXACTLY (requested)
+   ========================================================= */
 .pending-wrapper {
     background: #f4f8ff;
     border-radius: 18px;
@@ -23,10 +22,10 @@ body {
 .section-title {
     font-size: 28px;
     font-weight: 700;
-    background: #003366;
-    color: white;
-    padding: 14px 18px;
     margin-bottom: 10px;
+    color: white;
+    background: #003366;
+    padding: 14px 18px;
     border-radius: 10px;
 }
 
@@ -36,9 +35,9 @@ body {
     margin-bottom: 14px;
 }
 
-/* ===============================
-   pendingtable FILTER LABEL
-   =============================== */
+/* =========================================================
+   FILTER LABEL
+   ========================================================= */
 .pendingtable-filter {
     font-size: 0.9rem;
     font-weight: 600;
@@ -46,9 +45,10 @@ body {
     margin-bottom: 6px;
 }
 
-/* ===============================
-   TABLE CONTAINER (DataFrame + Editor)
-   =============================== */
+/* =========================================================
+   PENDINGTABLE TABLE CONTAINER
+   ========================================================= */
+.pendingtable-container,
 [data-testid="stDataFrame"],
 [data-testid="stDataEditor"] {
     background: white !important;
@@ -58,11 +58,12 @@ body {
     overflow: hidden !important;
 }
 
-/* ===============================
-   TABLE HEADER
-   =============================== */
+/* =========================================================
+   TABLE HEADER — pendingtable terminology
+   ========================================================= */
 [data-testid="stDataFrame"] thead th,
-[data-testid="stDataEditor"] thead th {
+[data-testid="stDataEditor"] thead th,
+.pendingtable-header-cell {
     background-color: #1f3a65 !important;
     color: white !important;
     text-transform: uppercase;
@@ -72,22 +73,25 @@ body {
     border-bottom: 2px solid #102544 !important;
 }
 
-/* ===============================
+/* =========================================================
    ALTERNATING ROW COLORS
-   =============================== */
-[data-testid="stDataFrame"] tbody tr:nth-child(odd),
-[data-testid="stDataEditor"] tbody tr:nth-child(odd) {
-    background-color: #f7f8fb !important;
-}
-
+   ========================================================= */
+.pendingtable-row-even,
 [data-testid="stDataFrame"] tbody tr:nth-child(even),
 [data-testid="stDataEditor"] tbody tr:nth-child(even) {
     background-color: #eef4ff !important;
 }
 
-/* ===============================
-   HOVER EFFECT
-   =============================== */
+.pendingtable-row-odd,
+[data-testid="stDataFrame"] tbody tr:nth-child(odd),
+[data-testid="stDataEditor"] tbody tr:nth-child(odd) {
+    background-color: #f7f8fb !important;
+}
+
+/* =========================================================
+   HOVER EFFECT (renamed)
+   ========================================================= */
+.pendingtable-hover:hover,
 [data-testid="stDataFrame"] tbody tr:hover,
 [data-testid="stDataEditor"] tbody tr:hover {
     background-color: #dce9ff !important;
@@ -95,9 +99,10 @@ body {
     transition: 0.15s ease-in-out;
 }
 
-/* ===============================
-   TABLE CELL TEXT
-   =============================== */
+/* =========================================================
+   CELL TEXT (pendingtable terminology)
+   ========================================================= */
+.pendingtable-cell,
 [data-testid="stDataFrame"] td,
 [data-testid="stDataEditor"] td {
     color: #0d2247 !important;
@@ -106,31 +111,45 @@ body {
     border-bottom: 1px solid #d8e2f2 !important;
 }
 
-/* ===============================
-   RISK BADGES
-   =============================== */
+/* =========================================================
+   RISK BADGES (pendingtable naming)
+   ========================================================= */
 .pendingtable-badge-high {
     color: #e53935 !important;
     font-weight: 700 !important;
 }
+
 .pendingtable-badge-medium {
     color: #fb8c00 !important;
     font-weight: 700 !important;
 }
+
 .pendingtable-badge-low {
     color: #43a047 !important;
     font-weight: 700 !important;
 }
 
-/* ===============================
-   OPTIONAL: Highlight Rows
-   =============================== */
+/* =========================================================
+   OPTIONAL HIGHLIGHT ROWS
+   ========================================================= */
 .pendingtable-highlight-yellow {
     background-color: #fff6d5 !important;
 }
+
 .pendingtable-highlight-blue {
     background-color: #dce8ff !important;
 }
 
+/* =========================================================
+   OPTIONAL PENDINGTABLE TITLE BAR (if needed later)
+   ========================================================= */
+.pendingtable-headerbar {
+    padding: 10px 14px;
+    background: #003366;
+    color: white;
+    font-size: 1.2rem;
+    font-weight: 700;
+    border-radius: 10px;
+}
+
 </style>
-""", unsafe_allow_html=True)
