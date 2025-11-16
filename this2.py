@@ -40,9 +40,9 @@ html = """
     }}
 
     .initial-header-card {{
-        background: var(--initial-background, #ffe7d6);
-        border-radius: var(--initial-radius, 0.75rem);
-        padding: var(--initial-padding, 1.25rem 1.75rem);
+        background:#ffe7d6;
+        border-radius:1rem;
+        padding:1.75rem 2rem;
         display:flex;
         justify-content:space-between;
         align-items:flex-start;
@@ -51,7 +51,7 @@ html = """
     }}
 
     .initial-header-title {{
-        font-size:1.75rem;
+        font-size:2.1rem;
         font-weight:600;
         margin-top:0.35rem;
     }}
@@ -87,29 +87,53 @@ html = """
         box-shadow:0 1px 3px rgba(15,23,42,0.05);
     }}
 
-    /* Larger labels for Art/Delivery Vehicle & Sponsor */
+    /* Larger labels + values for ART / Sponsor / Amount */
+    .initial-section {{
+        padding-bottom:1rem;
+        margin-bottom:1rem;
+        border-bottom:1px solid #e5e7eb;
+        font-family:"Segoe UI", system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+    }}
+
     .initial-label-large {{
-        font-size:1rem;
-        font-weight:600;
+        font-size:1.1rem;
+        font-weight:500;
+        color:#111827;
         margin-bottom:0.25rem;
     }}
 
     .initial-value {{
         font-size:1rem;
-        font-weight:500;
+        font-weight:600;
+        color:#111827;
     }}
 
-    .initial-section {{
-        padding-bottom:1rem;
-        margin-bottom:1rem;
-        border-bottom:1px solid #e5e7eb;
+    /* Generic small label (for KPI cards & footer) */
+    .initial-label {{
+        font-size:0.8rem;
+        text-transform:uppercase;
+        letter-spacing:0.06em;
+        color:#6b7280;
+        margin-bottom:0.35rem;
+    }}
+
+    /* KPI cards row */
+    .initial-kpi-row {{
+        display:flex;
+        gap:1.25rem;
+        margin-top:0.75rem;
+        margin-bottom:0.5rem;
     }}
 
     .initial-kpi-card {{
-        border-radius:0.75rem;
-        padding:1rem 1.25rem;
-        background: var(--initial-background, #f3f4f6);
-        margin-bottom:1rem;
+        flex:1;
+        border-radius:0.9rem;
+        padding:1.25rem 1.5rem;
+        background:#f3f4f6;
+        box-shadow:0 1px 2px rgba(15,23,42,0.05);
+        display:flex;
+        flex-direction:column;
+        justify-content:center;
     }}
 
     .initial-footer-row {{
@@ -124,11 +148,7 @@ html = """
 <div class="initial-wrapper">
 
   <!-- HEADER -->
-  <div class="initial-header-card" style="
-        --initial-background:#ffe7d6;
-        --initial-radius:0.75rem;
-        --initial-padding:1.25rem 1.75rem;
-  ">
+  <div class="initial-header-card">
     <div>
       <div class="initial-subtitle">Project Page</div>
       <div class="initial-header-title">{0}</div>
@@ -146,41 +166,45 @@ html = """
   <!-- MAIN CARD -->
   <div class="initial-main-card">
 
-    <!-- SECTION: ART / DELIVERY VEHICLE -->
+    <!-- ART / DELIVERY VEHICLE -->
     <div class="initial-section">
       <div class="initial-label-large">ART/Delivery Vehicle</div>
       <div class="initial-value">{0}</div>
     </div>
 
-    <!-- SECTION: SPONSOR -->
+    <!-- SPONSOR -->
     <div class="initial-section">
       <div class="initial-label-large">Sponsor</div>
       <div class="initial-value">{3}</div>
     </div>
 
-    <!-- SECTION: AMOUNT -->
-    <div class="initial-section">
+    <!-- AMOUNT -->
+    <div class="initial-section" style="border-bottom:1px solid #f3f4f6; margin-bottom:1.25rem;">
       <div class="initial-label-large">Amount</div>
       <div class="initial-value">{4}</div>
     </div>
 
-    <!-- KPI CARDS -->
-    <div class="initial-kpi-card" style="--initial-background:#ffe7d6;">
-      <div class="initial-label">Amount</div>
-      <div class="initial-value">{4}</div>
+    <!-- KPI CARDS ROW -->
+    <div class="initial-kpi-row">
+
+      <div class="initial-kpi-card" style="background:#ffe7d6;">
+        <div class="initial-label">Amount</div>
+        <div class="initial-value">{4}</div>
+      </div>
+
+      <div class="initial-kpi-card" style="background:{5};">
+        <div class="initial-label">Overall Status</div>
+        <div class="initial-value">{6}</div>
+      </div>
+
+      <div class="initial-kpi-card" style="background:{7};">
+        <div class="initial-label">Risk Level</div>
+        <div class="initial-value">{8}</div>
+      </div>
+
     </div>
 
-    <div class="initial-kpi-card" style="--initial-background:{5};">
-      <div class="initial-label">Overall Status</div>
-      <div class="initial-value">{6}</div>
-    </div>
-
-    <div class="initial-kpi-card" style="--initial-background:{7};">
-      <div class="initial-label">Risk Level</div>
-      <div class="initial-value">{8}</div>
-    </div>
-
-    <!-- FOOTER -->
+    <!-- FOOTER DETAILS -->
     <div class="initial-footer-row">
       <div>
         <div class="initial-label">Submitted</div>
@@ -203,18 +227,18 @@ html = """
 </body>
 </html>
 """.format(
-    art_delivery,           # 0
-    sid,                    # 1
-    current_stage,          # 2
+    art_delivery,              # 0
+    sid,                       # 1
+    current_stage,             # 2
     s_row.get("Sponsor","-"),  # 3
-    amount,                 # 4
-    overall_bg,             # 5
-    overall,                # 6
-    risk_bg,                # 7
-    risk_level,             # 8
-    submitted,              # 9
-    requester,              # 10
-    department              # 11
+    amount,                    # 4
+    overall_bg,                # 5
+    overall,                   # 6
+    risk_bg,                   # 7
+    risk_level,                # 8
+    submitted,                 # 9
+    requester,                 # 10
+    department                 # 11
 )
 
 components.html(html, height=900, scrolling=True)
