@@ -87,7 +87,7 @@ html = """
         box-shadow:0 1px 3px rgba(15,23,42,0.05);
     }}
 
-    /* Larger labels + values for ART / Sponsor / Amount */
+    /* Details sections */
     .initial-section {{
         padding-bottom:1rem;
         margin-bottom:1rem;
@@ -108,7 +108,7 @@ html = """
         color:#111827;
     }}
 
-    /* Generic small label (for KPI cards & footer) */
+    /* Small label */
     .initial-label {{
         font-size:0.8rem;
         text-transform:uppercase;
@@ -117,7 +117,7 @@ html = """
         margin-bottom:0.35rem;
     }}
 
-    /* KPI cards row */
+    /* KPI row */
     .initial-kpi-row {{
         display:flex;
         gap:1.25rem;
@@ -125,15 +125,25 @@ html = """
         margin-bottom:0.5rem;
     }}
 
+    /* KPI card: DARK BLUE BACKGROUND + WHITE TEXT */
     .initial-kpi-card {{
         flex:1;
         border-radius:0.9rem;
         padding:1.25rem 1.5rem;
-        background:#f3f4f6;
+        background:#1e3a8a;  /* DARK BLUE */
         box-shadow:0 1px 2px rgba(15,23,42,0.05);
         display:flex;
         flex-direction:column;
         justify-content:center;
+        color:white;   /* Make all text white */
+    }}
+
+    .initial-kpi-card .initial-label {{
+        color:white;   /* White label text */
+    }}
+
+    .initial-kpi-card .initial-value {{
+        color:white;   /* White value text */
     }}
 
     .initial-footer-row {{
@@ -166,38 +176,35 @@ html = """
   <!-- MAIN CARD -->
   <div class="initial-main-card">
 
-    <!-- ART / DELIVERY VEHICLE -->
     <div class="initial-section">
       <div class="initial-label-large">ART/Delivery Vehicle</div>
       <div class="initial-value">{0}</div>
     </div>
 
-    <!-- SPONSOR -->
     <div class="initial-section">
       <div class="initial-label-large">Sponsor</div>
       <div class="initial-value">{3}</div>
     </div>
 
-    <!-- AMOUNT -->
-    <div class="initial-section" style="border-bottom:1px solid #f3f4f6; margin-bottom:1.25rem;">
+    <div class="initial-section">
       <div class="initial-label-large">Amount</div>
       <div class="initial-value">{4}</div>
     </div>
 
-    <!-- KPI CARDS ROW -->
+    <!-- KPI CARDS (DARK BLUE) -->
     <div class="initial-kpi-row">
 
-      <div class="initial-kpi-card" style="background:#ffe7d6;">
+      <div class="initial-kpi-card">
         <div class="initial-label">Amount</div>
         <div class="initial-value">{4}</div>
       </div>
 
-      <div class="initial-kpi-card" style="background:{5};">
+      <div class="initial-kpi-card">
         <div class="initial-label">Overall Status</div>
         <div class="initial-value">{6}</div>
       </div>
 
-      <div class="initial-kpi-card" style="background:{7};">
+      <div class="initial-kpi-card">
         <div class="initial-label">Risk Level</div>
         <div class="initial-value">{8}</div>
       </div>
