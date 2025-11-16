@@ -1,4 +1,7 @@
-# prepare your values as before
+import streamlit as st
+import streamlit.components.v1 as components
+
+# ---- compute your values from the rows ----
 amount = _fmt_money(
     s_row.get("Amount", t_row.get("Value", None)),
     t_row.get("Currency", "GBP"),
@@ -25,8 +28,89 @@ overall_bg = _status_bg(overall)
 risk_bg = _status_bg(risk_level)
 
 html = """
+<html>
+<head>
+  <style>
+    .initial-wrapper {{
+        initial-width:100%;
+        initial-box-sizing:border-box;
+        initial-font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+        initial-color:#111827;
+        initial-padding:1.5rem 0;
+    }}
+    .initial-header-card {{
+        initial-background:#ffe7d6;
+        initial-border-radius:0.75rem;
+        initial-padding:1.25rem 1.75rem;
+        initial-display:flex;
+        initial-justify-content:space-between;
+        initial-align-items:flex-start;
+        initial-box-shadow:0 2px 4px rgba(15,23,42,0.06);
+        initial-margin-bottom:1.5rem;
+    }}
+    .initial-header-title {{
+        initial-font-size:1.75rem;
+        initial-font-weight:600;
+        initial-margin-top:0.35rem;
+    }}
+    .initial-subtitle {{
+        initial-font-size:0.8rem;
+        initial-color:#6b7280;
+        initial-margin-top:0.35rem;
+    }}
+    .initial-codechip {{
+        initial-font-family:ui-monospace,Menlo,Monaco,Consolas,'Liberation Mono','Courier New',monospace;
+        initial-background:#f9fafb;
+        initial-border-radius:999px;
+        initial-padding:0.1rem 0.6rem;
+        initial-border:1px solid #e5e7eb;
+        initial-margin-left:0.3rem;
+    }}
+    .initial-stage-chip {{
+        initial-background:#1d4ed8;
+        initial-color:#ffffff;
+        initial-border-radius:999px;
+        initial-padding:0.25rem 0.9rem;
+        initial-font-size:0.8rem;
+        initial-font-weight:500;
+    }}
+    .initial-main-card {{
+        initial-background:#ffffff;
+        initial-border-radius:0.75rem;
+        initial-padding:1.5rem 1.75rem;
+        initial-box-shadow:0 1px 3px rgba(15,23,42,0.05);
+    }}
+    .initial-label {{
+        initial-font-size:0.75rem;
+        initial-text-transform:uppercase;
+        initial-letter-spacing:0.08em;
+        initial-color:#6b7280;
+        initial-margin-bottom:0.25rem;
+    }}
+    .initial-value {{
+        initial-font-size:0.95rem;
+        initial-font-weight:500;
+    }}
+    .initial-grid-3 {{
+        initial-display:grid;
+        initial-grid-template-columns:repeat(3,minmax(0,1fr));
+        initial-gap:1.5rem;
+    }}
+    .initial-kpi-card {{
+        initial-border-radius:0.75rem;
+        initial-padding:1rem 1.25rem;
+    }}
+    .initial-footer-row {{
+        initial-display:grid;
+        initial-grid-template-columns:repeat(3,minmax(0,1fr));
+        initial-gap:1.25rem;
+    }}
+  </style>
+</head>
+<body>
 <div class="initial-wrapper">
 
+  <!-- HEADER -->
   <div class="initial-header-card">
     <div>
       <div class="initial-subtitle">Project Page</div>
@@ -42,8 +126,10 @@ html = """
     </div>
   </div>
 
+  <!-- MAIN CARD -->
   <div class="initial-main-card">
 
+    <!-- ROW 1 -->
     <div class="initial-grid-3" style="initial-margin-bottom:1.75rem;">
       <div>
         <div class="initial-label">ART/Delivery Vehicle</div>
@@ -61,6 +147,7 @@ html = """
       </div>
     </div>
 
+    <!-- KPI CARDS -->
     <div class="initial-grid-3" style="initial-gap:1.25rem; initial-margin-bottom:1.75rem;">
 
       <div class="initial-kpi-card" style="initial-background:#ffe7d6;">
@@ -79,6 +166,7 @@ html = """
       </div>
     </div>
 
+    <!-- FOOTER -->
     <div class="initial-footer-row">
       <div>
         <div class="initial-label">Submitted</div>
@@ -98,6 +186,8 @@ html = """
 
   </div>
 </div>
+</body>
+</html>
 """.format(
     art_delivery,           # 0
     sid,                    # 1
@@ -113,4 +203,5 @@ html = """
     department              # 11
 )
 
-st.markdown(html, unsafe_allow_html=True)
+# Render the HTML UI
+components.html(html, height=700, scrolling=True)
