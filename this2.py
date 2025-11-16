@@ -31,24 +31,29 @@ html = """
 <html>
 <head>
   <style>
-    .initial-wrapper {{
-        font-family: system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-        color:#111827;
-        padding:1.5rem 0;
-        box-sizing:border-box;
-        width:100%;
-    }}
+    .initial-wrapper {
+      font-family: system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+      color:#111827;
+      padding:1.5rem 0;
+      box-sizing:border-box;
+      width:100%;
+  }
 
-    .initial-header-card {{
-        background:#ffe7d6;
-        border-radius:1rem;
-        padding:1.75rem 2rem;
-        display:flex;
-        justify-content:space-between;
-        align-items:flex-start;
-        box-shadow:0 2px 4px rgba(15,23,42,0.06);
-        margin-bottom:1.5rem;
-    }}
+  /* =======================
+     HEADER (UPDATED)
+     ======================= */
+  .initial-header-card {
+      background:#1e3a8a;       /* DARK BLUE */
+      border-radius:1.2rem;
+      padding:2.5rem 2.5rem;    /* MORE PADDING – now works */
+      display:flex;
+      justify-content:space-between;
+      align-items:center;       /* fix: FLEX START made height collapse */
+      min-height:130px;         /* FORCED HEIGHT */
+      box-shadow:0 4px 12px rgba(15,23,42,0.25);
+      margin-bottom:2rem;
+      color:white;              /* ALL TEXT WHITE */
+  }
 
     .initial-header-title {{
         font-size:2.1rem;
@@ -249,3 +254,4 @@ html = """
 )
 
 components.html(html, height=900, scrolling=True)
+
