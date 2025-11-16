@@ -96,3 +96,15 @@ body {
     color: #43a047;
     font-weight: 700;
 }
+
+
+
+
+def risk_badge(v: str) -> str:
+    s = str(v).strip().lower()
+    if s == "high":
+        return '<span class="badge-high">🔴 High</span>'
+    if s == "low":
+        return '<span class="badge-low">🟢 Low</span>'
+    return '<span class="badge-medium">🟠 Medium</span>'
+
