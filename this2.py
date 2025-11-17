@@ -1,62 +1,61 @@
-import textwrap
-
-def kpi_card(title, value, bg="#0A1A44", badge_bg="#0EA5E9", badge_color="#FFFFFF"):
-
-    html = textwrap.dedent(f"""
-    <div style="
-        background:{bg};
-        border-radius:14px;
-        padding:20px 22px;
-        text-align:center;
-        color:white;
-        border:1px solid rgba(255,255,255,0.15);
-        box-shadow:0 4px 10px rgba(0,0,0,0.15);
-    ">
-        <div style="
-            font-size:36px;
-            font-weight:800;
-            margin-bottom:6px;
-        ">{value}</div>
-
-        <span style="
-            display:inline-block;
-            padding:6px 14px;
-            border-radius:999px;
-            background:{badge_bg};
-            color:{badge_color};
-            font-weight:700;
-            font-size:14px;
-        ">{title}</span>
-    </div>
-    """)
-
-    st.markdown(html, unsafe_allow_html=True)
+rating = st.selectbox(
+    "Rating (optional)", 
+    ["", "⭐️", "⭐️⭐️", "⭐️⭐️⭐️", "⭐️⭐️⭐️⭐️", "⭐️⭐️⭐️⭐️⭐️"]
+)
 
 
 
-with c1:
-    kpi_card("Pending", len(pending_df),
-             bg="#0A1A44",          # hero dark blue
-             badge_bg="#1E3A8A",    # deep blue accent
-             badge_color="#FFFFFF")
 
-with c2:
-    kpi_card("Approved", len(approved_df),
-             bg="#0A1A44",
-             badge_bg="#16A34A",     # green success
-             badge_color="#FFFFFF")
 
-with c3:
-    kpi_card("Awaiting Others", len(awaiting_df),
-             bg="#0A1A44",
-             badge_bg="#F59E0B",     # orange warning
-             badge_color="#FFFFFF")
+import uuid
 
-with c4:
-    kpi_card("Total Items", len(df),
-             bg="#0A1A44",
-             badge_bg="#0EA5E9",     # aqua highlight
-             badge_color="#FFFFFF")
+# Build feedback record
+feedback_df = pd.DataFrame([{
+    "comment_id": str(uuid.uuid4()),
+    "sanction_id": sid,
+    "stage": current_stage,
+    "rating": rating,
+    "comment": comment,
+    "username": assigned_to,  # using assigned_to as “username” as you said
+    "created_at": _now_iso()
+}])
 
 
 
+
+csv_data = feedback_df.to_csv(index=False)
+
+st.download_button(
+    label="⬇️ Download Feedback CSV",
+    data=csv_data,
+    file_name=f"feedback_{sid}.csv",
+    mime="text/csv"
+)
+
+
+
+
+
+
+import uuid
+
+# ---- FEEDBACK CSV GENERATION ----
+feedback_df = pd.DataFrame([{
+    "comment_id": str(uuid.uuid4()),
+    "sanction_id": sid,
+    "stage": current_stage,
+    "rating": rating,
+    "comment": comment,
+    "username": assigned_to,
+    "created_at": _now_iso()
+}])
+
+csv_data = feedback_df.to_csv(index=False)
+
+st.download_button(
+    label="⬇️ Download Feedback CSV",
+    data=csv_data,
+    file_name=f"feedback_{sid}.csv",
+    mime="text/csv",
+    use_container_width=True
+)
