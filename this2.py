@@ -247,3 +247,28 @@ if "latest_feedback" in st.session_state:
         use_container_width=True
     )
 
+
+
+
+
+
+def _append_feedback_row(row: dict, path: str = "feedback_history.csv"):
+    """Append a single feedback row to feedback_history.csv."""
+    # If file exists, read & append
+    if os.path.exists(path):
+        df = pd.read_csv(path)
+        df = pd.concat([df, pd.DataFrame([row])], ignore_index=True)
+    else:
+        # If not exists, start new file
+        df = pd.DataFrame([row])
+
+    # Save back
+    df.to_csv(path, index=False)
+
+
+
+# Append to persistent feedback history
+try:
+    _append_feedback_row(st.session_state["latest_feedback"])
+except Exception as e:
+    st.error(f"⚠️ Failed to append feedback to history CSV: {e}")
