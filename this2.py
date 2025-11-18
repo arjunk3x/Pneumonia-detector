@@ -148,18 +148,25 @@ if submitted:
 
 
 
+# ---------- REJECTED ----------
 elif new_status == "Rejected":
 
-    # Store timestamp (so page knows a decision was made)
-    tracker_df.loc[mask, decision_field] = when
+    # 🔥 CHANGED: Prevent resubmission (same behaviour as Approve)
+    if tracker_df.loc[mask, meta["status"]].iloc[0] == "Rejected":
+        st.warning("This sanction has already been rejected. No further actions can be taken.")
+        st.stop()
+    # 🔥 END OF CHANGE
 
+    # Clear timestamp → means stage NOT completed
+    tracker_df.loc[mask, decision_field] = ""
+
+    # Update status fields
     tracker_df.loc[mask, "Overall_status"] = "Rejected"
     tracker_df.loc[mask, "Current Stage"] = current_stage
 
-    # Turn OFF this stage so user cannot act again
-    tracker_df.loc[mask, flag_field] = False
-
-    # All other stages also false
+    # All is_in flags must be FALSE  
     for stg, m in STAGE_KEYS.items():
         tracker_df.loc[mask, m["flag"]] = False
+
+
 
