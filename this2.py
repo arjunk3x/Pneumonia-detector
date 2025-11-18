@@ -141,3 +141,25 @@ if submitted:
     st.success(f"Saved decision for {sid} at {current_stage}: {new_status}")
     st.toast("Updated ✓")
     st.rerun()
+
+
+
+
+
+
+
+elif new_status == "Rejected":
+
+    # Store timestamp (so page knows a decision was made)
+    tracker_df.loc[mask, decision_field] = when
+
+    tracker_df.loc[mask, "Overall_status"] = "Rejected"
+    tracker_df.loc[mask, "Current Stage"] = current_stage
+
+    # Turn OFF this stage so user cannot act again
+    tracker_df.loc[mask, flag_field] = False
+
+    # All other stages also false
+    for stg, m in STAGE_KEYS.items():
+        tracker_df.loc[mask, m["flag"]] = False
+
