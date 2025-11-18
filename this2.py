@@ -1,105 +1,143 @@
+# ============================================================
+# BACKEND SUBMISSION LOGIC  (must NOT run unless submitted)
+# ============================================================
 if submitted:
-    # Ensure row exists in tracker
+
+    # ------------------------------
+    # 0. Permission guard
+    # ------------------------------
+    if not role_can_act:
+        st.error("You are not authorised to perform this action.")
+        st.stop()
+
+    # ------------------------------
+    # 1. Ensure tracker row exists
+    # ------------------------------
     if t_row.empty:
-        tracker_df = pd.concat([tracker_df, pd.DataFrame([{"Sanction_ID": sid}])], ignore_index=True)
+        tracker_df = pd.concat([
+            tracker_df,
+            pd.DataFrame([{"Sanction_ID": sid}])
+        ], ignore_index=True)
         t_row = tracker_df.loc[tracker_df["Sanction_ID"] == sid].iloc[0]
 
     tracker_df = _ensure_tracker_columns(tracker_df)
-
-    dec_lower = decision.lower()
-    new_status = (
-        "Approved" if "approve" in dec_lower else
-        ("Rejected" if "reject" in dec_lower else "Changes requested")
-    )
-
     mask = tracker_df["Sanction_ID"] == sid
 
-    # Update assigned_to & comments
+    # ------------------------------
+    # 2. Map decision → new_status
+    # ------------------------------
+    dec_lower = decision.lower()
+    if "approve" in dec_lower:
+        new_status = "Approved"
+    elif "reject" in dec_lower:
+        new_status = "Rejected"
+    else:
+        new_status = "Changes requested"
+
+    # ------------------------------
+    # 3. Basic field updates
+    # ------------------------------
+    tracker_df.loc[mask, meta["status"]] = new_status
     tracker_df.loc[mask, meta["assigned_to"]] = assigned_to
     tracker_df.loc[mask, "Last_comment"] = comment
 
-    # ----------------------------------------------------------------------
-    # NEW PROGRESSION LOGIC BASED 100% ON TIMESTAMP MEANING
-    # ----------------------------------------------------------------------
+    # NOTE: do NOT set decision_at outside of Approved
+    #       otherwise it creates infinite loop
 
-    # Fields for current stage
+    # ------------------------------
+    # 4. Correct Stage Progression Logic
+    # ------------------------------
     flag_field = meta["flag"]
     decision_field = meta["decision_at"]
 
-    # =========================
-    # 1️⃣ APPROVED
-    # =========================
+    nxt = _next_stage(current_stage) if new_status == "Approved" else None
+
+    # ---------- APPROVED ----------
     if new_status == "Approved":
 
-        # Write decision timestamp → means stage completed
-        tracker_df.loc[mask, decision_field] = when or _now_iso()
+        # Write timestamp → this means stage is completed
+        tracker_df.loc[mask, decision_field] = when
 
-        # Turn OFF current stage flag
+        # Turn off current stage
         tracker_df.loc[mask, flag_field] = False
 
-        # Move to next stage
-        nxt = _next_stage(current_stage)
         if nxt:
+            # Move to next stage
             tracker_df.loc[mask, "Current Stage"] = nxt
             tracker_df.loc[mask, "Overall_status"] = "In progress"
 
-            # Enable only next_team.is_in
+            # Turn ON only the next stage flag, all others off
             for stg, m in STAGE_KEYS.items():
                 tracker_df.loc[mask, m["flag"]] = (stg == nxt)
-
         else:
-            # Final stage approved (ETIDM)
+            # Last stage fully approved
             tracker_df.loc[mask, "Overall_status"] = "Approved"
-            tracker_df.loc[mask, flag_field] = False
 
-    # =========================
-    # 2️⃣ REJECTED
-    # =========================
+    # ---------- REJECTED ----------
     elif new_status == "Rejected":
 
-        # CLEAR the decision timestamp → stage was NOT completed
+        # Clear timestamp → means stage NOT completed
         tracker_df.loc[mask, decision_field] = ""
 
         tracker_df.loc[mask, "Overall_status"] = "Rejected"
         tracker_df.loc[mask, "Current Stage"] = current_stage
 
-        # Rejected → ALL is_in_* flags must be FALSE
+        # All is_in flags must be FALSE
         for stg, m in STAGE_KEYS.items():
             tracker_df.loc[mask, m["flag"]] = False
 
-    # =========================
-    # 3️⃣ REQUEST CHANGES
-    # =========================
-    else:  # changes requested
+    # ---------- REQUEST CHANGES ----------
+    else:
 
-        # CLEAR decision timestamp → stage incomplete
+        # Clear timestamp
         tracker_df.loc[mask, decision_field] = ""
 
         tracker_df.loc[mask, "Overall_status"] = "Changes requested"
         tracker_df.loc[mask, "Current Stage"] = current_stage
 
-        # Stay in same stage → only current stage flag TRUE
+        # Only current stage active
         for stg, m in STAGE_KEYS.items():
             tracker_df.loc[mask, m["flag"]] = (stg == current_stage)
 
-    # ----------------------------------------------------------------------
-    # Save CSVs
-    # ----------------------------------------------------------------------
-    try:
-        _write_csv(tracker_df, APPROVER_TRACKER_PATH)
-    except Exception as e:
-        st.error(f"Failed to update {APPROVER_TRACKER_PATH}: {e}")
+    # ------------------------------
+    # 5. Save to CSVs (ONLY here)
+    # ------------------------------
+    _write_csv(tracker_df, APPROVER_TRACKER_PATH)
 
-    # Mirror change into sanctions_data CSV
-    try:
-        if "Sanction ID" in sanctions_df.columns:
-            ms = sanctions_df["Sanction ID"] == sid
-            sanctions_df.loc[ms, "Current Stage"] = tracker_df.loc[mask, "Current Stage"].iloc[0]
-            sanctions_df.loc[ms, "Status"] = tracker_df.loc[mask, "Overall_status"].iloc[0]
-            _write_csv(sanctions_df, SANCTIONS_PATH)
-    except Exception as e:
-        st.warning(f"Could not update {SANCTIONS_PATH}: {e}")
+    if "Sanction ID" in sanctions_df.columns:
+        ms = sanctions_df["Sanction ID"] == sid
+        sanctions_df.loc[ms, "Current Stage"] = tracker_df.loc[mask, "Current Stage"].iloc[0]
+        sanctions_df.loc[ms, "Status"] = tracker_df.loc[mask, "Overall_status"].iloc[0]
+        _write_csv(sanctions_df, SANCTIONS_PATH)
 
+    # ------------------------------
+    # 6. Notifications (ONLY inside submit)
+    # ------------------------------
+    if new_status == "Approved":
+        add_notification(
+            sanction_id=sid,
+            team=current_stage,
+            message=f"Sanction {sid} approved by {current_stage}"
+        )
+
+    # ------------------------------
+    # 7. Save feedback log (ONLY inside submit)
+    # ------------------------------
+    import uuid
+    feedback_row = {
+        "comment_id": str(uuid.uuid4()),
+        "sanction_id": sid,
+        "stage": current_stage,
+        "rating": rating,
+        "comment": comment,
+        "username": assigned_to,
+        "created_at": _now_iso()
+    }
+    save_fb(feedback_row, "feedback.csv")
+
+    # ------------------------------
+    # 8. Finish
+    # ------------------------------
     st.success(f"Saved decision for {sid} at {current_stage}: {new_status}")
     st.toast("Updated ✓")
     st.rerun()
