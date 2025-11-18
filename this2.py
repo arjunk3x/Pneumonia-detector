@@ -1,32 +1,28 @@
 # ============================================================
-# BACKEND SUBMISSION LOGIC  (must NOT run unless submitted)
+# BACKEND SUBMISSION LOGIC  (runs ONLY when submit is pressed)
 # ============================================================
 if submitted:
 
-    # ------------------------------
-    # 0. Permission guard
-    # ------------------------------
+    # Permission guard
     if not role_can_act:
         st.error("You are not authorised to perform this action.")
         st.stop()
 
-    # ------------------------------
-    # 1. Ensure tracker row exists
-    # ------------------------------
+    # Ensure row exists
     if t_row.empty:
         tracker_df = pd.concat([
             tracker_df,
             pd.DataFrame([{"Sanction_ID": sid}])
         ], ignore_index=True)
-        t_row = tracker_df.loc[tracker_df["Sanction_ID"] == sid].iloc[0]
 
     tracker_df = _ensure_tracker_columns(tracker_df)
     mask = tracker_df["Sanction_ID"] == sid
 
-    # ------------------------------
-    # 2. Map decision → new_status
-    # ------------------------------
+    # --------------------------
+    # MAP DECISION → STATUS
+    # --------------------------
     dec_lower = decision.lower()
+
     if "approve" in dec_lower:
         new_status = "Approved"
     elif "reject" in dec_lower:
@@ -34,31 +30,26 @@ if submitted:
     else:
         new_status = "Changes requested"
 
-    # ------------------------------
-    # 3. Basic field updates
-    # ------------------------------
+    # Update basic fields
     tracker_df.loc[mask, meta["status"]] = new_status
     tracker_df.loc[mask, meta["assigned_to"]] = assigned_to
     tracker_df.loc[mask, "Last_comment"] = comment
 
-    # NOTE: do NOT set decision_at outside of Approved
-    #       otherwise it creates infinite loop
-
-    # ------------------------------
-    # 4. Correct Stage Progression Logic
-    # ------------------------------
+    # --------------------------
+    # STAGE PROGRESSION LOGIC
+    # --------------------------
     flag_field = meta["flag"]
     decision_field = meta["decision_at"]
 
     nxt = _next_stage(current_stage) if new_status == "Approved" else None
 
-    # ---------- APPROVED ----------
+    # APPROVED
     if new_status == "Approved":
 
-        # Write timestamp → this means stage is completed
+        # Set timestamp only for approved
         tracker_df.loc[mask, decision_field] = when
 
-        # Turn off current stage
+        # Disable current stage
         tracker_df.loc[mask, flag_field] = False
 
         if nxt:
@@ -66,42 +57,41 @@ if submitted:
             tracker_df.loc[mask, "Current Stage"] = nxt
             tracker_df.loc[mask, "Overall_status"] = "In progress"
 
-            # Turn ON only the next stage flag, all others off
+            # Set ALL other is_in flags to False except next stage
             for stg, m in STAGE_KEYS.items():
                 tracker_df.loc[mask, m["flag"]] = (stg == nxt)
+
         else:
-            # Last stage fully approved
+            # Final approval
             tracker_df.loc[mask, "Overall_status"] = "Approved"
 
-    # ---------- REJECTED ----------
+    # REJECTED
     elif new_status == "Rejected":
 
-        # Clear timestamp → means stage NOT completed
         tracker_df.loc[mask, decision_field] = ""
 
         tracker_df.loc[mask, "Overall_status"] = "Rejected"
         tracker_df.loc[mask, "Current Stage"] = current_stage
 
-        # All is_in flags must be FALSE
+        # Turn ALL flags OFF
         for stg, m in STAGE_KEYS.items():
             tracker_df.loc[mask, m["flag"]] = False
 
-    # ---------- REQUEST CHANGES ----------
+    # CHANGES REQUESTED
     else:
 
-        # Clear timestamp
         tracker_df.loc[mask, decision_field] = ""
 
         tracker_df.loc[mask, "Overall_status"] = "Changes requested"
         tracker_df.loc[mask, "Current Stage"] = current_stage
 
-        # Only current stage active
+        # Turn ON only current stage
         for stg, m in STAGE_KEYS.items():
             tracker_df.loc[mask, m["flag"]] = (stg == current_stage)
 
-    # ------------------------------
-    # 5. Save to CSVs (ONLY here)
-    # ------------------------------
+    # --------------------------
+    # SAVE TRACKER + SANCTIONS
+    # --------------------------
     _write_csv(tracker_df, APPROVER_TRACKER_PATH)
 
     if "Sanction ID" in sanctions_df.columns:
@@ -110,9 +100,9 @@ if submitted:
         sanctions_df.loc[ms, "Status"] = tracker_df.loc[mask, "Overall_status"].iloc[0]
         _write_csv(sanctions_df, SANCTIONS_PATH)
 
-    # ------------------------------
-    # 6. Notifications (ONLY inside submit)
-    # ------------------------------
+    # --------------------------
+    # NOTIFICATIONS
+    # --------------------------
     if new_status == "Approved":
         add_notification(
             sanction_id=sid,
@@ -120,9 +110,9 @@ if submitted:
             message=f"Sanction {sid} approved by {current_stage}"
         )
 
-    # ------------------------------
-    # 7. Save feedback log (ONLY inside submit)
-    # ------------------------------
+    # --------------------------
+    # FEEDBACK CSV
+    # --------------------------
     import uuid
     feedback_row = {
         "comment_id": str(uuid.uuid4()),
@@ -135,9 +125,7 @@ if submitted:
     }
     save_fb(feedback_row, "feedback.csv")
 
-    # ------------------------------
-    # 8. Finish
-    # ------------------------------
+    # Final UI updates
     st.success(f"Saved decision for {sid} at {current_stage}: {new_status}")
     st.toast("Updated ✓")
     st.rerun()
