@@ -22,41 +22,68 @@
 
 
 
-def _stage_block(stage, t_row, current_stage):
-    stage_key = STAGE_KEYS[stage]
-    status_col = stage_key["status"]
-    assigned_col = stage_key["assigned_to"]
-    decision_at_col = stage_key["decision_at"]
+def stage_block(stage_label: str, tr: pd.Series, current_stage: str) -> str:
+    meta = STAGE_KEYS[stage_label]
 
-    status = str(t_row.get(status_col, "Pending"))
-    assigned_to = t_row.get(assigned_col, "")
-    decided_at = t_row.get(decision_at_col, "")
+    status = str(tr.get(meta["status"], "Pending"))
+    assigned = str(tr.get(meta["assigned_to"], "")) or "--"
+    decided = str(tr.get(meta["decision_at"], "")) or "--"
 
-    # Determine CSS class
-    cls = "step"
-    if status == "Approved":
-        cls += " done"         # GREEN
-    elif status == "Rejected":
-        cls += " rejected"     # RED
+    # ========================================
+    # STATUS COLOR USING PILL CLASS
+    # ========================================
+    # pill_class() already supports metadata classes for:
+    # approved → green
+    # rejected → red
+    # pending → grey
+    # changes requested → yellow (if defined in your CSS)
+    cls = _pill_class(status)   # <span class="pill {cls}">...</span>
 
-    html = f"""
-    <div class="{cls}">
-        <div class="title">{stage}</div>
+    # ========================================
+    # STEP BLOCK COLOR (BIG BOX)
+    # ========================================
+    # Your step box uses: active / done / rejected / default
+    status_lower = status.lower()
 
-        <div class="row">
-            <div class="lbl">Status:</div>
-            <div class="val">{status}</div>
+    if current_stage == stage_label:
+        state = "active"              # Blue-ish current stage
+    elif status_lower == "approved":
+        state = "done"                # Green big box
+    elif status_lower == "rejected":
+        state = "rejected"            # NEW → Red big box
+    else:
+        state = ""                    # Pending or Changes requested
+
+    # ========================================
+    # ICON MAP
+    # ========================================
+    icon = {
+        "SDA": "🟦",
+        "Data Guild": "🟪",
+        "Digital Guild": "🟧",
+        "ETIDM": "🟩"
+    }.get(stage_label, "⭐")
+
+    # ========================================
+    # HTML OUTPUT
+    # ========================================
+    return f"""
+    <div class="step {state}">
+        <div class="title">{icon} {stage_label}</div>
+
+        <div class="meta">
+            Status:
+            <span class="pill {cls}">{status}</span>
         </div>
 
         <div class="row">
-            <div class="lbl">Assigned:</div>
-            <div class="val">{assigned_to or "--"}</div>
+            <div class="lbl">Assigned</div>
+            <div class="val">{assigned}</div>
         </div>
 
         <div class="row">
-            <div class="lbl">Updated:</div>
-            <div class="val">{decided_at or "--"}</div>
+            <div class="lbl">Decided</div>
+            <div class="val">{decided}</div>
         </div>
     </div>
     """
-    return html
