@@ -87,3 +87,26 @@ def stage_block(stage_label: str, tr: pd.Series, current_stage: str) -> str:
         </div>
     </div>
     """
+
+\
+
+
+
+
+
+# ---- LOAD REAL PDF BYTES ----
+try:
+    # First try to load the real sanction report PDF (if exists)
+    real_pdf_path = Path(f"sanction_database/sanction_report_{sid}.pdf")
+
+    if real_pdf_path.exists():
+        pdf_path = real_pdf_path
+    else:
+        # Fall back to preview template (your current PDF)
+        pdf_path = Path("assets/SanctionTemplate.pdf")
+
+    file_bytes = pdf_path.read_bytes()
+
+except Exception:
+    # final fallback so the app doesn't crash
+    file_bytes = main_name.encode("utf-8")
