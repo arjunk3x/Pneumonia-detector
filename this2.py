@@ -110,3 +110,9 @@ try:
 except Exception:
     # final fallback so the app doesn't crash
     file_bytes = main_name.encode("utf-8")
+
+
+
+original_row = sanctions_df[sanctions_df["Sanction ID"] == sid].iloc[0].to_dict()
+pd.DataFrame([original_row])
+
