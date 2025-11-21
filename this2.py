@@ -116,3 +116,23 @@ except Exception:
 original_row = sanctions_df[sanctions_df["Sanction ID"] == sid].iloc[0].to_dict()
 pd.DataFrame([original_row])
 
+
+# Assume sanctions_df has the original data, with "Sanction ID" and "Value"/"Amount"
+
+if tracker_df.empty or sid not in tracker_df["Sanction_ID"].values:
+    base_row = (
+        sanctions_df.loc[sanctions_df["Sanction ID"] == sid]
+        .iloc[0]                      # get the row as Series
+        .to_dict()
+    )
+
+    # Make column names consistent with tracker_df
+    base_row["Sanction_ID"] = base_row.pop("Sanction ID")   # rename key
+    # Now base_row still contains Value/Amount, Currency, etc.
+
+    tracker_df = pd.concat(
+        [tracker_df, pd.DataFrame([base_row])],
+        ignore_index=True,
+    )
+
+
