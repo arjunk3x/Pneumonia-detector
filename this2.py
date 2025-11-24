@@ -187,4 +187,102 @@ elif current_role == "ETIDM":
 
 
 
+with st.expander(f"Intake ({role_display_name(current_role)})", expanded=False):
+
+    if con is None:
+        st.info("No database connection configured.")
+        backlog_df = pd.DataFrame()
+    else:
+        # ---------------------------------------------------------
+        # 1) Parallel pre-reviewers: HeadDataAI, DataGovIA,
+        #    ArchAssurance, Finance, Regulatory
+        #    → all pull from submitted items independently
+        # ---------------------------------------------------------
+        if current_role in PRE_REVIEW_ROLES:
+            cur_is_in, cur_status, _, _ = stage_cols(current_role)
+
+            backlog_df = con.execute(f"""
+                SELECT *
+                FROM approval
+                WHERE TRY_CAST(is_submitter AS BIGINT) = 1
+                  AND {flag_true_sql(cur_is_in)} = FALSE
+            """).df()
+
+        # ---------------------------------------------------------
+        # 2) Digital Guild: only see items where ALL five
+        #    pre-reviewers have Approved
+        # ---------------------------------------------------------
+        elif current_role == "DigitalGuild":
+            conditions = []
+            for rname in PRE_REVIEW_ROLES:
+                r_is_in, r_status, _, r_decision_at = stage_cols(rname)
+                conditions.append(
+                    f"""
+                    {flag_true_sql(r_is_in)} = TRUE
+                    AND CAST({r_status} AS VARCHAR) = 'Approved'
+                    AND TRY_CAST({r_decision_at} AS TIMESTAMP) IS NOT NULL
+                    """
+                )
+            all_pre_ok = " AND ".join(conditions)
+
+            cur_is_in, cur_status, _, _ = stage_cols("DigitalGuild")
+
+            backlog_df = con.execute(f"""
+                SELECT *
+                FROM approval
+                WHERE {all_pre_ok}
+                  AND {flag_true_sql(cur_is_in)} = FALSE
+                  AND COALESCE(CAST({cur_status} AS VARCHAR), '') IN ('','Pending')
+            """).df()
+
+        # ---------------------------------------------------------
+        # 3) ETIDM: sequential after Digital Guild
+        # ---------------------------------------------------------
+        elif current_role == "ETIDM":
+            dg_is_in, dg_status, _, dg_decision_at = stage_cols("DigitalGuild")
+            cur_is_in, cur_status, _, _ = stage_cols("ETIDM")
+
+            backlog_df = con.execute(f"""
+                SELECT *
+                FROM approval
+                WHERE {flag_true_sql(dg_is_in)} = TRUE
+                  AND CAST({dg_status} AS VARCHAR) = 'Approved'
+                  AND TRY_CAST({dg_decision_at} AS TIMESTAMP) IS NOT NULL
+                  AND {flag_true_sql(cur_is_in)} = FALSE
+                  AND COALESCE(CAST({cur_status} AS VARCHAR), '') IN ('','Pending')
+            """).df()
+
+        # Anything else → empty
+        else:
+            backlog_df = con.execute("SELECT * FROM approval WHERE 1=0").df()
+
+    # --------- everything BELOW this stays the same ---------
+    if backlog_df.empty:
+        st.info("No items available for intake.")
+    else:
+        st.dataframe(
+            backlog_df[["Sanction_ID", "Value", "Overall_status"]],
+            use_container_width=True,
+        )
+
+        intake_ids = st.multiselect(
+            "Select Sanction_IDs to intake",
+            backlog_df["Sanction_ID"].astype(str).tolist(),
+        )
+
+        if st.button(f"Move selected to {current_role}"):
+            if intake_ids:
+                set_stage_flags_inplace(df, intake_ids, current_role)
+
+                # Persist and refresh registration so queries see updates immediately
+                df.to_csv(CSV_PATH, index=False)
+                try:
+                    con.unregister("approval")
+                except Exception:
+                    pass
+                con.register("approval", df)
+
+                st.success(f"Moved {len(intake_ids)} to {current_role}")
+                st.rerun()
+
 
