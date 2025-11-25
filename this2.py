@@ -631,3 +631,6 @@ if submitted:
 
 
 
+str(
+    t_row.get("Current Stage", s_row.get("Current Stage", "-"))
+)
