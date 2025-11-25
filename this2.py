@@ -286,3 +286,118 @@ with st.expander(f"Intake ({role_display_name(current_role)})", expanded=False):
                 st.rerun()
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# =========================
+# Session defaults
+# =========================
+if "user_email" not in st.session_state:
+    # default to Head of Data & AI user (just a placeholder)
+    st.session_state["user_email"] = "headdataai@company.com"
+
+if "user_role" not in st.session_state:
+    # one of: HeadDataAI | DataGovIA | ArchAssurance | Finance | Regulatory | DigitalGuild | ETIDM
+    st.session_state["user_role"] = "HeadDataAI"
+
+# =========================
+# Session / Current user & role
+# =========================
+current_user = st.session_state.get("user_email", "headdataai@company.com")
+
+if "user_role" not in st.session_state:
+    st.session_state["user_role"] = "HeadDataAI"
+
+current_role = st.session_state.get("user_role")  # "HeadDataAI"|...|"ETIDM"
+
+
+
+
+
+
+
+
+
+
+# Load data + ensure columns
+if not CSV_PATH.exists():
+    st.error(f"CSV not found at {CSV_PATH.resolve()}")
+    st.stop()
+
+df = pd.read_csv(CSV_PATH)
+
+# Ensure expected columns exist IN THE SAME ORDER AS THE CSV HEADER
+for col, default in [
+    # core fields
+    ("Sanction_ID", ""),
+    ("Value", 0.0),
+    ("Overall_status", "Submitted"),
+    ("is_submitter", 1),
+
+    # Head of Data & AI
+    ("is_in_head_data_ai", 0),
+    ("head_data_ai_status", "Pending"),
+    ("head_data_ai_assigned_to", None),
+    ("head_data_ai_decision_at", None),
+
+    # DataGovIA (reusing old data_guild_* columns)
+    ("is_in_data_guild", 0),
+    ("data_guild_status", "Pending"),
+    ("data_guild_assigned_to", None),
+    ("data_guild_decision_at", None),
+
+    # ArchAssurance  (reusing old SDA_* columns)
+    ("is_in_SDA", 0),
+    ("SDA_status", "Pending"),
+    ("SDA_assigned_to", None),
+    ("SDA_decision_at", None),
+
+    # Finance
+    ("is_in_finance", 0),
+    ("finance_status", "Pending"),
+    ("finance_assigned_to", None),
+    ("finance_decision_at", None),
+
+    # Regulatory
+    ("is_in_regulatory", 0),
+    ("regulatory_status", "Pending"),
+    ("regulatory_assigned_to", None),
+    ("regulatory_decision_at", None),
+
+    # Digital Guild
+    ("is_in_digital_guild", 0),
+    ("digital_guild_status", "Pending"),
+    ("digital_guild_assigned_to", None),
+    ("digital_guild_decision_at", None),
+
+    # ETIDM
+    ("is_in_etidm", 0),
+    ("etidm_status", "Pending"),
+    ("etidm_assigned_to", None),
+    ("etidm_decision_at", None),
+]:
+    if col not in df.columns:
+        df[col] = default
+
+
