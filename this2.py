@@ -1,31 +1,4 @@
-users = {
-    "submit":        {"role": "submitter", "password": "a"},
-
-    "HeadDataAI":    {"role": "approver", "password": "a"},
-    "DataGovIA":     {"role": "approver", "password": "a"},
-    "ArchAssurance": {"role": "approver", "password": "a"},
-    "Finance":       {"role": "approver", "password": "a"},
-    "Regulatory":    {"role": "approver", "password": "a"},
-
-    "DigitalGuild":  {"role": "approver", "password": "a"},
-    "ETIDM":         {"role": "approver", "password": "a"},
-}
-
-TEAM_CODES = (
-    "HeadDataAI",
-    "DataGovIA",
-    "ArchAssurance",
-    "Finance",
-    "Regulatory",
-    "DigitalGuild",
-    "ETIDM",
-)
-
-st.session_state.user_role = username if username in TEAM_CODES else None
-
-
-
-ROLE_FLOW: List[str] = [
+STAGES = [
     "HeadDataAI",
     "DataGovIA",
     "ArchAssurance",
@@ -35,92 +8,56 @@ ROLE_FLOW: List[str] = [
     "ETIDM",
 ]
 
+# Pre-Digital Guild reviewers (parallel)
+PRE_REVIEW_STAGES = [
+    "HeadDataAI",
+    "DataGovIA",
+    "ArchAssurance",
+    "Finance",
+    "Regulatory",
+]
 
-def role_display_name(role: str) -> str:
-    return {
-        "HeadDataAI": "Head of Data & AI",
-        "DataGovIA": "Data Governance & Information Architecture",
-        "ArchAssurance": "Architectural Assurance",
-        "Finance": "Finance",
-        "Regulatory": "Regulatory",
-        "DigitalGuild": "Digital Guild",
-        "ETIDM": "ETIDM",
-    }.get(role, role)
-
-
-EMAIL_TO_ROLE: Dict[str, str] = {
-    "headdataai@company.com": "HeadDataAI",
-    "datagovia@company.com": "DataGovIA",
-    "arch@company.com": "ArchAssurance",
-    "finance@company.com": "Finance",
-    "reg@company.com": "Regulatory",
-    "dig@company.com": "DigitalGuild",
-    "etidm@company.com": "ETIDM",
-}
-
-
-mapping = {
-    "headdataai": "HeadDataAI",
-    "headofdataai": "HeadDataAI",
-    "dataandai": "HeadDataAI",
-    "datagovia": "DataGovIA",
-    "datagovernanceandinformationarchitecture": "DataGovIA",
-    "datagovernance": "DataGovIA",
-    "archassurance": "ArchAssurance",
-    "architecturalassurance": "ArchAssurance",
-    "finance": "Finance",
-    "regulatory": "Regulatory",
-    "digitalguild": "DigitalGuild",
-    "digguild": "DigitalGuild",
-    "etidm": "ETIDM",
-}
-
-
-def prev_role(role: str) -> Optional[str]:
-    if role == "ETIDM":
-        return "DigitalGuild"
-    return None
-
-
-STAGE_MAP: Dict[str, Dict[str, str]] = {
+# Map logical stage names → underlying tracker columns
+# Note: DataGovIA + ArchAssurance reuse the older data_guild_* / SDA_* columns.
+STAGE_KEYS = {
     "HeadDataAI": {
-        "is_in": "is_in_head_data_ai",
+        "flag": "is_in_head_data_ai",
         "status": "head_data_ai_status",
         "assigned_to": "head_data_ai_assigned_to",
         "decision_at": "head_data_ai_decision_at",
     },
     "DataGovIA": {
-        "is_in": "is_in_data_guild",           # existing columns
+        "flag": "is_in_data_guild",
         "status": "data_guild_status",
         "assigned_to": "data_guild_assigned_to",
         "decision_at": "data_guild_decision_at",
     },
     "ArchAssurance": {
-        "is_in": "is_in_SDA",                  # existing columns
+        "flag": "is_in_SDA",
         "status": "SDA_status",
         "assigned_to": "SDA_assigned_to",
         "decision_at": "SDA_decision_at",
     },
     "Finance": {
-        "is_in": "is_in_finance",
+        "flag": "is_in_finance",
         "status": "finance_status",
         "assigned_to": "finance_assigned_to",
         "decision_at": "finance_decision_at",
     },
     "Regulatory": {
-        "is_in": "is_in_regulatory",
+        "flag": "is_in_regulatory",
         "status": "regulatory_status",
         "assigned_to": "regulatory_assigned_to",
         "decision_at": "regulatory_decision_at",
     },
     "DigitalGuild": {
-        "is_in": "is_in_digital_guild",
+        "flag": "is_in_digital_guild",
         "status": "digital_guild_status",
         "assigned_to": "digital_guild_assigned_to",
         "decision_at": "digital_guild_decision_at",
     },
     "ETIDM": {
-        "is_in": "is_in_etidm",
+        "flag": "is_in_etidm",
         "status": "etidm_status",
         "assigned_to": "etidm_assigned_to",
         "decision_at": "etidm_decision_at",
@@ -128,314 +65,260 @@ STAGE_MAP: Dict[str, Dict[str, str]] = {
 }
 
 
-PRE_REVIEW_ROLES = [
-    "HeadDataAI",
-    "DataGovIA",
-    "ArchAssurance",
-    "Finance",
-    "Regulatory",
-]
-
-
-def visibility_filter_for(role: str) -> str:
-    is_in_col, _, _, _ = stage_cols(role)
-    return f"{flag_true_sql(is_in_col)} = TRUE"
-
-
-def set_stage_flags_inplace(df: pd.DataFrame, ids: List[str], stage: str) -> None:
-    stage_flag_col, stage_status_col, stage_assigned_col, _ = stage_cols(stage)
-
-    mask = df["Sanction_ID"].astype(str).isin([str(x) for x in ids])
-
-    # Do NOT clear other flags: parallel review allowed.
-    df.loc[mask, stage_flag_col] = 1
-    df.loc[mask, stage_status_col] = df.loc[mask, stage_status_col].replace(
-        {None: "Pending", "": "Pending"}
-    )
-    df.loc[mask, stage_assigned_col] = df.loc[mask, stage_assigned_col].fillna("")
-
-    # items are no longer raw submissions once any pre-reviewer has picked them up
-    if stage in PRE_REVIEW_ROLES and "is_submitter" in df.columns:
-        df.loc[mask, "is_submitter"] = 0
-
-
-initialise_session_state("user_email", "headdataai@company.com")
-initialise_session_state("user_role", "HeadDataAI")
-
-
-"Stage": role_display_name(current_role),
 
 
 
 
 
 
-if current_role in PRE_REVIEW_ROLES:
-    # Pre-review roles pull directly from submitted items (parallel intake)
-    backlog_df = ... WHERE is_submitter = 1 AND this_stage_flag = FALSE
 
-elif current_role == "DigitalGuild":
-    # Only items where ALL five pre-reviewers have approved
-    # (build AND chain of conditions for HeadDataAI, DataGovIA, ArchAssurance, Finance, Regulatory)
-    backlog_df = ... WHERE all_pre_ok AND digitalguild_flag = FALSE ...
+def save_fb(row):
+    """
+    Append a feedback row to FEEDBACK_HISTORY_PATH using the schema:
+    comment_id, sanction_id, stage, rating, comment, username, created_at
+    """
+    cols = [
+        "comment_id",
+        "sanction_id",
+        "stage",
+        "rating",
+        "comment",
+        "username",
+        "created_at",
+    ]
 
-elif current_role == "ETIDM":
-    # Still sequential on Digital Guild
-    backlog_df = ... WHERE digitalguild_approved AND etidm_flag = FALSE ...
-
-
-
-
-
-with st.expander(f"Intake ({role_display_name(current_role)})", expanded=False):
-
-    if con is None:
-        st.info("No database connection configured.")
-        backlog_df = pd.DataFrame()
+    if os.path.exists(FEEDBACK_HISTORY_PATH):
+        df = pd.read_csv(FEEDBACK_HISTORY_PATH)
     else:
-        # ---------------------------------------------------------
-        # 1) Parallel pre-reviewers: HeadDataAI, DataGovIA,
-        #    ArchAssurance, Finance, Regulatory
-        #    → all pull from submitted items independently
-        # ---------------------------------------------------------
-        if current_role in PRE_REVIEW_ROLES:
-            cur_is_in, cur_status, _, _ = stage_cols(current_role)
+        df = pd.DataFrame(columns=cols)
 
-            backlog_df = con.execute(f"""
-                SELECT *
-                FROM approval
-                WHERE TRY_CAST(is_submitter AS BIGINT) = 1
-                  AND {flag_true_sql(cur_is_in)} = FALSE
-            """).df()
+    # Ensure all columns exist
+    for c in cols:
+        if c not in df.columns:
+            df[c] = ""
 
-        # ---------------------------------------------------------
-        # 2) Digital Guild: only see items where ALL five
-        #    pre-reviewers have Approved
-        # ---------------------------------------------------------
-        elif current_role == "DigitalGuild":
-            conditions = []
-            for rname in PRE_REVIEW_ROLES:
-                r_is_in, r_status, _, r_decision_at = stage_cols(rname)
-                conditions.append(
-                    f"""
-                    {flag_true_sql(r_is_in)} = TRUE
-                    AND CAST({r_status} AS VARCHAR) = 'Approved'
-                    AND TRY_CAST({r_decision_at} AS TIMESTAMP) IS NOT NULL
-                    """
-                )
-            all_pre_ok = " AND ".join(conditions)
+    # Auto-increment comment_id
+    if df.empty:
+        next_id = 1
+    else:
+        try:
+            next_id = int(pd.to_numeric(df["comment_id"], errors="coerce").max()) + 1
+        except Exception:
+            next_id = 1
 
-            cur_is_in, cur_status, _, _ = stage_cols("DigitalGuild")
+    row_out = {
+        "comment_id": next_id,
+        "sanction_id": row.get("sanction_id"),
+        "stage": row.get("stage"),
+        "rating": row.get("rating"),
+        "comment": row.get("comment"),
+        "username": row.get("username"),
+        "created_at": row.get("created_at"),
+    }
 
-            backlog_df = con.execute(f"""
-                SELECT *
-                FROM approval
-                WHERE {all_pre_ok}
-                  AND {flag_true_sql(cur_is_in)} = FALSE
-                  AND COALESCE(CAST({cur_status} AS VARCHAR), '') IN ('','Pending')
-            """).df()
+    df = pd.concat([df, pd.DataFrame([row_out])], ignore_index=True)
+    _write_csv(df, FEEDBACK_HISTORY_PATH)
 
-        # ---------------------------------------------------------
-        # 3) ETIDM: sequential after Digital Guild
-        # ---------------------------------------------------------
-        elif current_role == "ETIDM":
-            dg_is_in, dg_status, _, dg_decision_at = stage_cols("DigitalGuild")
-            cur_is_in, cur_status, _, _ = stage_cols("ETIDM")
 
-            backlog_df = con.execute(f"""
-                SELECT *
-                FROM approval
-                WHERE {flag_true_sql(dg_is_in)} = TRUE
-                  AND CAST({dg_status} AS VARCHAR) = 'Approved'
-                  AND TRY_CAST({dg_decision_at} AS TIMESTAMP) IS NOT NULL
-                  AND {flag_true_sql(cur_is_in)} = FALSE
-                  AND COALESCE(CAST({cur_status} AS VARCHAR), '') IN ('','Pending')
-            """).df()
 
-        # Anything else → empty
+
+
+
+
+feedback = {
+    "sanction_id": sid,
+    "stage": current_stage,
+    "rating": rating,
+    "comment": comment,
+    "username": assigned_to or user_internal_role or current_stage,
+    "created_at": _now_iso(),
+}
+save_fb(feedback, "sanction_database/feedback.csv")
+
+
+
+
+
+
+
+
+
+
+def _all_pre_review_approved(row: pd.Series) -> bool:
+    """
+    True only if all pre-DigitalGuild reviewers have Approved
+    (status == 'Approved' and a non-empty decision_at).
+    """
+    for stg in PRE_REVIEW_STAGES:
+        meta = STAGE_KEYS[stg]
+        st_status = str(row.get(meta["status"], ""))
+        decided = str(row.get(meta["decision_at"], "") or "").strip()
+        if st_status != "Approved" or decided == "":
+            return False
+    return True
+
+
+
+
+
+
+
+
+overall_stage = str(t_row.get("Current Stage", s_row.get("Current Stage", "HeadDataAI")))
+if overall_stage not in STAGES:
+    overall_stage = "HeadDataAI"
+
+
+
+for idx, stage in enumerate(STAGES):
+    flow_html += _stage_block(stage, t_row, overall_stage)
+
+
+
+user_internal_role = st.session_state.get("user_role", "")
+
+if user_internal_role in STAGES:
+    user_stage_label = user_internal_role
+else:
+    # Legacy mapping back to new stages if user_role is an old label
+    legacy_map = {
+        "SDA": "ArchAssurance",
+        "DataGuild": "DataGovIA",
+        "DigitalGuild": "DigitalGuild",
+        "ETIDM": "ETIDM",
+    }
+    user_stage_label = legacy_map.get(user_internal_role, "HeadDataAI")
+
+current_stage = user_stage_label  # the stage this person is acting for
+
+meta = STAGE_KEYS.get(current_stage, {})
+existing_status = str(t_row.get(meta.get("status", ""), "Pending"))
+
+# ...
+
+role_can_act = current_stage in STAGES
+
+
+
+
+
+
+
+
+
+
+meta = STAGE_KEYS[current_stage]
+dec_lower = decision.lower()
+
+if "approve" in dec_lower:
+    new_status = "Approved"
+elif "reject" in dec_lower:
+    new_status = "Rejected"
+else:
+    new_status = "Changes requested"
+
+status_field = meta["status"]
+assigned_field = meta["assigned_to"]
+flag_field = meta["flag"]
+decision_field = meta["decision_at"]
+
+# Update this stage's own fields
+tracker_df.loc[mask, status_field] = new_status
+tracker_df.loc[mask, assigned_field] = assigned_to
+tracker_df.loc[mask, "last_comment"] = comment
+
+if new_status == "Approved":
+    tracker_df.loc[mask, decision_field] = when
+    tracker_df.loc[mask, flag_field] = 1
+else:
+    tracker_df.loc[mask, decision_field] = when
+
+# ---- Stage-specific workflow behaviour ----
+
+# 1) Pre-DigitalGuild reviewers (parallel)
+if current_stage in PRE_REVIEW_STAGES:
+    if new_status == "Rejected":
+        tracker_df.loc[mask, "Overall_status"] = f"Rejected at {current_stage}"
+        tracker_df.loc[mask, "Current Stage"] = overall_stage
+    elif new_status == "Changes requested":
+        tracker_df.loc[mask, "Overall_status"] = f"Changes requested by {current_stage}"
+        tracker_df.loc[mask, "Current Stage"] = overall_stage
+    else:  # Approved by this reviewer
+        # After this approval, check if *all* pre-review stages are now Approved
+        row_after = tracker_df.loc[mask].iloc[0]
+        if _all_pre_review_approved(row_after):
+            tracker_df.loc[mask, "Overall_status"] = "Pre-review approved"
+            tracker_df.loc[mask, "Current Stage"] = "DigitalGuild"
         else:
-            backlog_df = con.execute("SELECT * FROM approval WHERE 1=0").df()
+            tracker_df.loc[mask, "Overall_status"] = "In pre-review"
+            tracker_df.loc[mask, "Current Stage"] = overall_stage
 
-    # --------- everything BELOW this stays the same ---------
-    if backlog_df.empty:
-        st.info("No items available for intake.")
+# 2) Digital Guild
+elif current_stage == "DigitalGuild":
+    if new_status == "Approved":
+        tracker_df.loc[mask, "Overall_status"] = "Approved by Digital Guild"
+    elif new_status == "Rejected":
+        tracker_df.loc[mask, "Overall_status"] = "Rejected at Digital Guild"
     else:
-        st.dataframe(
-            backlog_df[["Sanction_ID", "Value", "Overall_status"]],
-            use_container_width=True,
+        tracker_df.loc[mask, "Overall_status"] = "Changes requested by Digital Guild"
+    tracker_df.loc[mask, "Current Stage"] = "DigitalGuild"
+
+# 3) ETIDM – final approver
+elif current_stage == "ETIDM":
+    if new_status == "Approved":
+        tracker_df.loc[mask, "Overall_status"] = "Fully approved"
+    elif new_status == "Rejected":
+        tracker_df.loc[mask, "Overall_status"] = "Rejected at ETIDM"
+    else:
+        tracker_df.loc[mask, "Overall_status"] = "Changes requested by ETIDM"
+    tracker_df.loc[mask, "Current Stage"] = "ETIDM"
+
+
+
+
+
+
+
+
+
+
+
+# ============================================================
+# FEEDBACK HISTORY + DOWNLOAD
+# ============================================================
+
+st.divider()
+st.markdown("<h3>Feedback history</h3>", unsafe_allow_html=True)
+
+if os.path.exists(FEEDBACK_HISTORY_PATH):
+    fh = pd.read_csv(FEEDBACK_HISTORY_PATH)
+    if "sanction_id" in fh.columns:
+        fh_this = fh[fh["sanction_id"].astype(str) == sid]
+    else:
+        fh_this = pd.DataFrame()
+
+    if fh_this.empty:
+        st.info("No feedback recorded for this sanction yet.")
+    else:
+        display_cols = [
+            "comment_id",
+            "sanction_id",
+            "stage",
+            "rating",
+            "comment",
+            "username",
+            "created_at",
+        ]
+        display_cols = [c for c in display_cols if c in fh_this.columns]
+        st.dataframe(fh_this[display_cols], hide_index=True, use_container_width=True)
+
+        csv_bytes = fh_this[display_cols].to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "Download feedback CSV for this sanction",
+            data=csv_bytes,
+            file_name=f"feedback_{sid}.csv",
+            mime="text/csv",
         )
-
-        intake_ids = st.multiselect(
-            "Select Sanction_IDs to intake",
-            backlog_df["Sanction_ID"].astype(str).tolist(),
-        )
-
-        if st.button(f"Move selected to {current_role}"):
-            if intake_ids:
-                set_stage_flags_inplace(df, intake_ids, current_role)
-
-                # Persist and refresh registration so queries see updates immediately
-                df.to_csv(CSV_PATH, index=False)
-                try:
-                    con.unregister("approval")
-                except Exception:
-                    pass
-                con.register("approval", df)
-
-                st.success(f"Moved {len(intake_ids)} to {current_role}")
-                st.rerun()
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# =========================
-# Session defaults
-# =========================
-if "user_email" not in st.session_state:
-    # default to Head of Data & AI user (just a placeholder)
-    st.session_state["user_email"] = "headdataai@company.com"
-
-if "user_role" not in st.session_state:
-    # one of: HeadDataAI | DataGovIA | ArchAssurance | Finance | Regulatory | DigitalGuild | ETIDM
-    st.session_state["user_role"] = "HeadDataAI"
-
-# =========================
-# Session / Current user & role
-# =========================
-current_user = st.session_state.get("user_email", "headdataai@company.com")
-
-if "user_role" not in st.session_state:
-    st.session_state["user_role"] = "HeadDataAI"
-
-current_role = st.session_state.get("user_role")  # "HeadDataAI"|...|"ETIDM"
-
-
-
-
-
-
-
-
-
-
-# Load data + ensure columns
-if not CSV_PATH.exists():
-    st.error(f"CSV not found at {CSV_PATH.resolve()}")
-    st.stop()
-
-df = pd.read_csv(CSV_PATH)
-
-# Ensure expected columns exist IN THE SAME ORDER AS THE CSV HEADER
-for col, default in [
-    # core fields
-    ("Sanction_ID", ""),
-    ("Value", 0.0),
-    ("Overall_status", "Submitted"),
-    ("is_submitter", 1),
-
-    # Head of Data & AI
-    ("is_in_head_data_ai", 0),
-    ("head_data_ai_status", "Pending"),
-    ("head_data_ai_assigned_to", None),
-    ("head_data_ai_decision_at", None),
-
-    # DataGovIA (reusing old data_guild_* columns)
-    ("is_in_data_guild", 0),
-    ("data_guild_status", "Pending"),
-    ("data_guild_assigned_to", None),
-    ("data_guild_decision_at", None),
-
-    # ArchAssurance  (reusing old SDA_* columns)
-    ("is_in_SDA", 0),
-    ("SDA_status", "Pending"),
-    ("SDA_assigned_to", None),
-    ("SDA_decision_at", None),
-
-    # Finance
-    ("is_in_finance", 0),
-    ("finance_status", "Pending"),
-    ("finance_assigned_to", None),
-    ("finance_decision_at", None),
-
-    # Regulatory
-    ("is_in_regulatory", 0),
-    ("regulatory_status", "Pending"),
-    ("regulatory_assigned_to", None),
-    ("regulatory_decision_at", None),
-
-    # Digital Guild
-    ("is_in_digital_guild", 0),
-    ("digital_guild_status", "Pending"),
-    ("digital_guild_assigned_to", None),
-    ("digital_guild_decision_at", None),
-
-    # ETIDM
-    ("is_in_etidm", 0),
-    ("etidm_status", "Pending"),
-    ("etidm_assigned_to", None),
-    ("etidm_decision_at", None),
-]:
-    if col not in df.columns:
-        df[col] = default
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-def visibility_filter_for(role: str) -> str:
-    """
-    Which records are visible to a given role.
-    For simplicity: anything flagged as 'in' their stage.
-    """
-    is_in_col, _, _, _ = stage_cols(role)
-    return f"{flag_true_sql(is_in_col)} = TRUE"
-
+else:
+    st.info("No feedback file created yet.")
+ 
