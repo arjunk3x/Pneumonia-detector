@@ -392,7 +392,235 @@ def _current_stage_label_for_role() -> str:
 
 
 
-current_stage = _current_internal_role() 
-user_internal_role = current_stage                # same internal value
-user_stage_label = _current_stage_label_for_role()
-role_can_act = current_stage in STAGES  
+# =========================
+# STAGE ACTIONS – Sticky Action Bar (ROLE-LOCKED)
+# =========================
+
+# 1. Work out which stage this *user* is acting for
+#    - internal role:  "SDA" | "DataGuild" | "DigitalGuild" | "ETIDM"
+#    - stage label:    "SDA" | "Data Guild" | "Digital Guild" | "ETIDM"
+user_internal_role = _current_internal_role()
+current_stage = _current_stage_label_for_role()   # this is the key used in STAGE_KEYS
+
+meta = STAGE_KEYS.get(current_stage, {})
+existing_status = str(t_row.get(meta.get("status", ""), "Pending"))
+
+# 2. Header (unchanged styling)
+st.markdown(
+    f"""
+    <div style='margin-bottom:10px;'>
+      <span style='font-size:1.8rem; font-weight:700;'>
+        Stage Actions | {current_stage}
+      </span><br>
+      <span style='color:#6c757d; font-size:1.1rem;'>
+        Current status:
+        <span class='badge {_pill_class(existing_status)}'>
+          {existing_status}
+        </span>
+      </span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+# If this stage is not configured in STAGE_KEYS, there’s nothing to do
+if current_stage not in STAGE_KEYS:
+    st.info("This stage has no configured actions.")
+else:
+    # =========================
+    # Permissions
+    # =========================
+    # At the moment: if we can map the user to a stage, they can act on that stage.
+    user_stage_label = current_stage          # same as what we show in the UI
+    role_can_act = current_stage in STAGE_KEYS
+
+    if not role_can_act:
+        st.warning(
+            f"Your role (**{user_stage_label}**) cannot act on **{current_stage}**."
+        )
+
+    # =========================
+    # DECISION FORM
+    # =========================
+    with st.form(f"form_{current_stage}"):
+
+        # 1. Decision
+        decision = st.radio(
+            "**Choose Your Action [Approve/Reject/Request changes]:**",
+            ["Approve ✅", "Reject ❌", "Request changes 🟡"],
+            index=0,
+            disabled=not role_can_act,
+        )
+
+        # 2. Rating
+        rating_stars = st.selectbox(
+            "**Rating (optional):**",
+            ["⭐", "⭐⭐", "⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐⭐⭐"],
+            index=0,
+            disabled=not role_can_act,
+        )
+        rating = rating_stars.count("⭐")
+
+        # 3. Assigned To + Decision time
+        col1, col2 = st.columns(2)
+        with col1:
+            assigned_to = st.text_input(
+                "**Assign to [Email/Name]:**",
+                disabled=not role_can_act,
+            )
+        with col2:
+            when = st.text_input(
+                "**Decision time:**",
+                value=_now_iso(),
+                help="Auto-filled; editable.",
+                disabled=not role_can_act,
+            )
+
+        # 4. Comments
+        comment = st.text_area(
+            "**Comments / Rationale**",
+            placeholder="Add remarks for documentation",
+            disabled=not role_can_act,
+        )
+
+        # 5. Buttons
+        col_reset, col_submit = st.columns([0.8, 0.2])
+        with col_reset:
+            cancel = st.form_submit_button(
+                "Reset form", disabled=not role_can_act
+            )
+        with col_submit:
+            submitted = st.form_submit_button(
+                "Submit decision", disabled=not role_can_act
+            )
+
+# =========================
+# BACKEND SUBMISSION LOGIC
+# =========================
+if submitted:
+    # 0. Permission guard
+    if not role_can_act:
+        st.error("You are not authorised to perform this action.")
+        st.stop()
+
+    # 1. Ensure tracker row exists
+    if tracker_df.empty:
+        tracker_df = pd.DataFrame([{"Sanction_ID": sid}])
+
+    if "Sanction_ID" not in tracker_df.columns:
+        tracker_df["Sanction_ID"] = ""
+
+    if sid not in tracker_df["Sanction_ID"].astype(str).tolist():
+        tracker_df = pd.concat(
+            [tracker_df, pd.DataFrame([{"Sanction_ID": sid}])],
+            ignore_index=True,
+        )
+
+    # Refresh row + mask
+    tracker_df = _ensure_tracker_columns(tracker_df)
+    mask = tracker_df["Sanction_ID"].astype(str) == sid
+    _row = tracker_df.loc[mask].iloc[0]
+
+    meta = STAGE_KEYS[current_stage]
+    prev_status = str(_row.get(meta.get("status", ""), ""))
+
+    # 2. Map decision -> new_status
+    dec_lower = decision.lower()
+    if "approve" in dec_lower:
+        new_status = "Approved"
+    elif "reject" in dec_lower:
+        new_status = "Rejected"
+    else:
+        new_status = "Changes requested"
+
+    # Prevent re-submission when already rejected
+    if new_status == "Rejected" and prev_status == "Rejected":
+        st.warning(
+            "This sanction has already been rejected. No further actions can be taken."
+        )
+        st.stop()
+
+    # 3. Basic field updates for this stage
+    tracker_df.loc[mask, meta["status"]] = new_status
+    tracker_df.loc[mask, meta["assigned_to"]] = assigned_to
+    tracker_df.loc[mask, "last_comment"] = comment
+
+    # 4. Stage progression logic (same as before: uses current_stage)
+    flag_field = meta["flag"]
+    decision_field = meta["decision_at"]
+    nxt = _next_stage(current_stage) if new_status == "Approved" else None
+
+    # ---------- APPROVED ----------
+    if new_status == "Approved":
+        # mark this stage as completed
+        tracker_df.loc[mask, decision_field] = when
+        tracker_df.loc[mask, flag_field] = False
+
+        if nxt:
+            # move overall workflow to the next stage
+            tracker_df.loc[mask, "Current Stage"] = nxt
+            tracker_df.loc[mask, "Overall_status"] = "In progress"
+            # only the next stage's flag is True
+            for stg, m in STAGE_KEYS.items():
+                tracker_df.loc[mask, m["flag"]] = (stg == nxt)
+        else:
+            # last stage in the flow
+            tracker_df.loc[mask, "Overall_status"] = "Approved"
+
+    # ---------- REJECTED ----------
+    elif new_status == "Rejected":
+        tracker_df.loc[mask, decision_field] = ""
+        tracker_df.loc[mask, "Overall_status"] = "Rejected"
+        tracker_df.loc[mask, "Current Stage"] = current_stage
+        for stg, m in STAGE_KEYS.items():
+            tracker_df.loc[mask, m["flag"]] = False
+
+    # ---------- REQUEST CHANGES ----------
+    else:
+        tracker_df.loc[mask, decision_field] = ""
+        tracker_df.loc[mask, "Overall_status"] = "Changes requested"
+        tracker_df.loc[mask, "Current Stage"] = current_stage
+        for stg, m in STAGE_KEYS.items():
+            tracker_df.loc[mask, m["flag"]] = (stg == current_stage)
+
+    # 5. Persist tracker + mirror to sanctions view
+    _write_csv(tracker_df, APPROVER_TRACKER_PATH)
+
+    if "Sanction ID" in sanctions_df.columns:
+        ms = sanctions_df["Sanction ID"].astype(str) == sid
+        sanctions_df.loc[ms, "Current Stage"] = tracker_df.loc[mask, "Current Stage"].iloc[0]
+        sanctions_df.loc[ms, "Status"] = tracker_df.loc[mask, "Overall_status"].iloc[0]
+        _write_csv(sanctions_df, SANCTIONS_PATH)
+
+    # 6. Notifications
+    if new_status == "Approved":
+        add_notification(
+            sanction_id=sid,
+            team=current_stage,
+            message=f"Sanction {sid} approved by {current_stage}.",
+        )
+    elif new_status == "Rejected":
+        add_notification(
+            sanction_id=sid,
+            team=current_stage,
+            message=f"Sanction {sid} rejected by {current_stage}.",
+        )
+
+    # 7. Save feedback log
+    feedback = {
+        "comment_id": str(uuid.uuid4()),
+        "sanction_id": sid,
+        "stage": current_stage,
+        "rating": rating,
+        "comment": comment,
+        "username": assigned_to,
+        "created_at": _now_iso(),
+    }
+    save_fb(feedback)
+
+    # 8. Finish
+    st.success(f"Saved decision for {sid} at {current_stage}: {new_status}")
+    st.toast("Updated ✅")
+    st.stop()
+
+
