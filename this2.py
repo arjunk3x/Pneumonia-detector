@@ -322,3 +322,77 @@ if os.path.exists(FEEDBACK_HISTORY_PATH):
 else:
     st.info("No feedback file created yet.")
  
+
+
+
+
+
+
+
+
+
+def _current_internal_role() -> str:
+    """
+    Returns the internal stage code this user represents.
+    E.g. 'HeadDataAI', 'DataGovIA', 'ArchAssurance', 'Finance',
+         'Regulatory', 'DigitalGuild', 'ETIDM'.
+    """
+    raw = (st.session_state.get("user_role") or "HeadDataAI").replace(" ", "")
+
+    # If already one of the new internal names, just use it
+    if raw in STAGES:
+        return raw
+
+    # Legacy mapping from old roles
+    legacy_map = {
+        "SDA": "ArchAssurance",
+        "DataGuild": "DataGovIA",
+        "DigitalGuild": "DigitalGuild",
+        "ETIDM": "ETIDM",
+    }
+    if raw in legacy_map:
+        return legacy_map[raw]
+
+    # Fallback from email (optional / best-effort)
+    e = st.session_state.get("user_email", "").lower()
+    if "headdata" in e:
+        return "HeadDataAI"
+    if "datagov" in e or "dgia" in e:
+        return "DataGovIA"
+    if "arch" in e or "sda" in e:
+        return "ArchAssurance"
+    if "finance" in e:
+        return "Finance"
+    if "reg" in e:
+        return "Regulatory"
+    if "digitalguild" in e or "digital" in e:
+        return "DigitalGuild"
+    if "etidm" in e:
+        return "ETIDM"
+
+    return "HeadDataAI"
+
+
+
+
+
+
+def _current_stage_label_for_role() -> str:
+    # map internal stage code -> UI label
+    return {
+        "HeadDataAI": "Head of Data & AI",
+        "DataGovIA": "Data Governance & IA",
+        "ArchAssurance": "Architectural Assurance",
+        "Finance": "Finance",
+        "Regulatory": "Regulatory",
+        "DigitalGuild": "Digital Guild",
+        "ETIDM": "ETIDM",
+    }[_current_internal_role()]
+
+
+
+
+current_stage = _current_internal_role() 
+user_internal_role = current_stage                # same internal value
+user_stage_label = _current_stage_label_for_role()
+role_can_act = current_stage in STAGES  
