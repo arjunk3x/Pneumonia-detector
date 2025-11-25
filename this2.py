@@ -624,3 +624,10 @@ if submitted:
     st.stop()
 
 
+
+
+
+"Current Stage": s_row.get("Current Stage", t_row.get("Current Stage", current_stage)),
+
+
+
