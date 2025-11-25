@@ -401,3 +401,41 @@ for col, default in [
         df[col] = default
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+def visibility_filter_for(role: str) -> str:
+    """
+    Which records are visible to a given role.
+    For simplicity: anything flagged as 'in' their stage.
+    """
+    is_in_col, _, _, _ = stage_cols(role)
+    return f"{flag_true_sql(is_in_col)} = TRUE"
+
