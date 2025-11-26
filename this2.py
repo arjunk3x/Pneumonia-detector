@@ -26,6 +26,10 @@ TEAM_CODES = (
 # ACTIONS SECTION (cards shown for current role)
 # ============================================================
 
+# ============================================================
+# ACTIONS SECTION (cards shown for current role)  – NO SQL
+# ============================================================
+
 st.markdown(
     f"""
     <div class="section-title" style="font-size: 28px; font-weight: bold;">
@@ -37,64 +41,78 @@ st.markdown(
 st.markdown('<div class="actions-divider"></div>', unsafe_allow_html=True)
 
 # -------------------------------------------------------------------
-# 1. Load items that need action for this role
+# 1. Build actions_df from an in-memory DataFrame
 # -------------------------------------------------------------------
-if con is None:
-    st.info("No database connection configured.")
-    actions_df = pd.DataFrame()
+
+# 👉 Use whatever dataframe holds your approval table
+#    (change `approval_df` to your own variable name if needed)
+try:
+    base_df = approval_df.copy()
+except NameError:
+    # Fallback if you used `df` instead of `approval_df`
+    base_df = df.copy()
+
+if base_df.empty:
+    actions_df = base_df
 else:
-    # Map current internal role -> its stage columns
-    # stage_cols() should already exist and return:
+    # Get the stage-specific column names for this role
+    # stage_cols(current_role) must already exist and return:
     #   is_in_col, status_col, assigned_col, decision_col
     is_in_col, status_col, assigned_col, decision_col = stage_cols(current_role)
 
-    query = None
+    # Normalise the helper columns so we can filter safely
+    is_submitter = (
+        pd.to_numeric(base_df.get("is_submitter", 0), errors="coerce")
+        .fillna(0)
+        .astype("Int64")
+    )
 
-    # ---- Parallel pre-review roles (HeadDataAI, DataGovIA, ArchAssurance, Finance, Regulatory)
+    is_in_stage = (
+        pd.to_numeric(base_df.get(is_in_col, 0), errors="coerce")
+        .fillna(0)
+        .astype("Int64")
+    )
+
+    status_in_stage = base_df.get(status_col, "Pending").fillna("Pending").astype(str)
+    current_stage_col = base_df.get("Current Stage", "").astype(str)
+
+    # ---------- Build mask per role (NO SQL) ----------
     if current_role in PRE_REVIEW_ROLES:
-        query = f"""
-            SELECT *
-            FROM approval
-            WHERE TRY_CAST(is_submitter AS BIGINT) = 1
-              AND COALESCE(TRY_CAST({is_in_col} AS BIGINT), 0) = 1
-              AND COALESCE({status_col}, 'Pending') NOT IN ('Approved', 'Rejected')
-        """
+        # Parallel pre-review teams all pull directly from submitted items
+        mask = (
+            (is_submitter == 1)
+            & (is_in_stage == 1)
+            & ~status_in_stage.isin(["Approved", "Rejected"])
+        )
 
-    # ---- Digital Guild: only see items whose overall current stage is Digital Guild
     elif current_role == "DigitalGuild":
-        query = f"""
-            SELECT *
-            FROM approval
-            WHERE TRY_CAST(is_submitter AS BIGINT) = 1
-              AND "Current Stage" = 'Digital Guild'
-              AND COALESCE(TRY_CAST({is_in_col} AS BIGINT), 0) = 1
-              AND COALESCE({status_col}, 'Pending') NOT IN ('Approved', 'Rejected')
-        """
+        mask = (
+            (is_submitter == 1)
+            & (current_stage_col == "Digital Guild")
+            & (is_in_stage == 1)
+            & ~status_in_stage.isin(["Approved", "Rejected"])
+        )
 
-    # ---- ETIDM: only see items whose overall current stage is ETIDM
     elif current_role == "ETIDM":
-        query = f"""
-            SELECT *
-            FROM approval
-            WHERE TRY_CAST(is_submitter AS BIGINT) = 1
-              AND "Current Stage" = 'ETIDM'
-              AND COALESCE(TRY_CAST({is_in_col} AS BIGINT), 0) = 1
-              AND COALESCE({status_col}, 'Pending') NOT IN ('Approved', 'Rejected')
-        """
+        mask = (
+            (is_submitter == 1)
+            & (current_stage_col == "ETIDM")
+            & (is_in_stage == 1)
+            & ~status_in_stage.isin(["Approved", "Rejected"])
+        )
 
-    # Fallback: nothing for unknown roles
-    if query is not None:
-        actions_df = con.execute(query).df()
     else:
-        actions_df = pd.DataFrame()
+        # Unknown role – nothing to act on
+        mask = pd.Series(False, index=base_df.index)
+
+    actions_df = base_df.loc[mask].copy()
 
 # -------------------------------------------------------------------
-# 2. Render action cards
+# 2. Render the action cards (unchanged styling)
 # -------------------------------------------------------------------
 if actions_df.empty:
     st.info("No items currently need your action.")
 else:
-    # You can sort/prioritise however you like here
     filtered_df = actions_df.reset_index(drop=True)
 
     for _, r in filtered_df.iterrows():
@@ -116,20 +134,22 @@ else:
         else:
             status_class = "status-pending"
 
-        # thin divider between cards
+        # Thin divider between cards
         st.markdown('<hr style="border: 0.5px solid #d3d3d3;">', unsafe_allow_html=True)
 
         c1, c2 = st.columns([5, 1])
 
         with c1:
-            # Header: ID + stage + status pill (keep your existing CSS classes)
+            # Header: ID + Stage + Status pill
             st.markdown(
                 f"""
                 <div class="action-header">
                     <div class="action-title">
                         <span class="action-title-icon">📂</span>
                         <span>Sanction ID: {r.get('Sanction_ID', '')}</span>
-                        <span class="action-pill-stage">Stage: {r.get('Stage', '')}</span>
+                        <span class="action-pill-stage">
+                            Stage: {r.get('Stage', '')}
+                        </span>
                     </div>
                     <div class="status-pill {status_class}">
                         {r.get('Status in Stage', '')}
@@ -139,7 +159,7 @@ else:
                 unsafe_allow_html=True,
             )
 
-            # Second row: value + risk level chips
+            # Value + risk row
             st.markdown(
                 f"""
                 <div class="detail-row">
@@ -157,8 +177,8 @@ else:
             )
 
         with c2:
-            # "View" button -> open Feedback_Page for this sanction
             if st.button("View ➜", key=f"view_{r.get('Sanction_ID', '')}"):
                 st.session_state["selected_sanction_id"] = str(r.get("Sanction_ID", ""))
                 st.session_state.navigate_to_feedback = True
                 st.rerun()
+
