@@ -145,77 +145,119 @@ def set_pre_review_flags_inplace(df: pd.DataFrame, ids: List[str]) -> None:
 
 
 
-st.markdown("---")
-st.markdown(f"### Intake ({role_display_name(current_role)})")
+with st.expander(f"Intake ({role_display_name(current_role)})", expanded=False):
 
-if con is not None:
-    if current_role in PRE_REVIEW_ROLES:
-        # One shared backlog: raw submissions not yet pushed into pre-review
-        backlog_df = con.execute(
-            f"""
-            SELECT *
-            FROM approval
-            WHERE TRY_CAST(is_submitter AS BIGINT) = 1
-              AND {flag_true_sql('is_in_head_data_ai')} = FALSE
-              AND {flag_true_sql('is_in_data_guild')} = FALSE
-              AND {flag_true_sql('is_in_SDA')} = FALSE
-              AND {flag_true_sql('is_in_finance')} = FALSE
-              AND {flag_true_sql('is_in_regulatory')} = FALSE
-            """
-        ).df()
-    elif current_role == "DigitalGuild":
-        # Items that have finished pre-review and are ready to enter Digital Guild
-        backlog_df = con.execute(
-            f"""
-            SELECT *
-            FROM approval
-            WHERE {flag_true_sql('is_in_digital_guild')} = FALSE
-              AND {flag_true_sql('is_in_etidm')} = FALSE
-              AND head_data_ai_status = 'Approved'
-              AND data_guild_status = 'Approved'
-              AND SDA_status = 'Approved'
-              AND finance_status = 'Approved'
-              AND regulatory_status = 'Approved'
-            """
-        ).df()
-    elif current_role == "ETIDM":
-        # Items approved by Digital Guild but not yet in ETIDM
-        backlog_df = con.execute(
-            f"""
-            SELECT *
-            FROM approval
-            WHERE {flag_true_sql('is_in_digital_guild')} = TRUE
-              AND digital_guild_status = 'Approved'
-              AND {flag_true_sql('is_in_etidm')} = FALSE
-            """
-        ).df()
+    if con is None:
+        st.info("No database connection configured.")
+        backlog_df = pd.DataFrame()
     else:
-        backlog_df = df.iloc[0:0].copy()
-else:
-    backlog_df = df.iloc[0:0].copy()
-
-
-
-
-
-
-if st.button(f"Move selected to {role_display_name(current_role)}"):
-    if intake_ids:
+        # -----------------------------------------------------------------
+        # 1) PARALLEL PRE-REVIEWERS
+        #    HeadDataAI, DataGovIA, ArchAssurance, Finance, Regulatory
+        #    All see the SAME backlog: raw submissions not yet in pre-review
+        # -----------------------------------------------------------------
         if current_role in PRE_REVIEW_ROLES:
-            # push into ALL 5 pre-review stages
-            set_pre_review_flags_inplace(df, intake_ids)
-        elif current_role in ("DigitalGuild", "ETIDM"):
-            # for these, we can still use the per-stage helper
-            set_stage_flags_inplace(df, intake_ids, current_role)
+            backlog_df = con.execute(
+                f"""
+                SELECT *
+                FROM approval
+                WHERE TRY_CAST(is_submitter AS BIGINT) = 1
+                  AND {flag_true_sql('is_in_head_data_ai')} = FALSE
+                  AND {flag_true_sql('is_in_data_guild')} = FALSE
+                  AND {flag_true_sql('is_in_SDA')} = FALSE
+                  AND {flag_true_sql('is_in_finance')} = FALSE
+                  AND {flag_true_sql('is_in_regulatory')} = FALSE
+                """
+            ).df()
 
-        # Persist to CSV & refresh registration
-        df.to_csv(CSV_PATH, index=False)
-        if con is not None:
-            try:
-                con.unregister("approval")
-            except Exception:
-                pass
-            con.register("approval", df)
+        # -----------------------------------------------------------------
+        # 2) DIGITAL GUILD: items that have *finished* pre-review
+        #    (all 5 pre-review statuses == Approved),
+        #    not yet flagged into DigitalGuild
+        # -----------------------------------------------------------------
+        elif current_role == "DigitalGuild":
+            conditions = []
+            for role_name in PRE_REVIEW_ROLES:
+                r_is_in, r_status, _, r_decision_at = stage_cols(role_name)
+                conditions.append(
+                    f"""
+                    {flag_true_sql(r_is_in)} = TRUE
+                    AND CAST({r_status} AS VARCHAR) = 'Approved'
+                    AND TRY_CAST({r_decision_at} AS TIMESTAMP) IS NOT NULL
+                    """
+                )
+            all_pre_ok = " AND ".join(conditions)
 
-        st.success(f"Moved {len(intake_ids)} item(s) to {role_display_name(current_role)}")
-        st.rerun()
+            dg_is_in, dg_status, _, _ = stage_cols("DigitalGuild")
+
+            backlog_df = con.execute(
+                f"""
+                SELECT *
+                FROM approval
+                WHERE ({all_pre_ok})
+                  AND {flag_true_sql(dg_is_in)} = FALSE
+                  AND COALESCE(CAST({dg_status} AS VARCHAR), '') IN ('', 'Pending')
+                """
+            ).df()
+
+        # -----------------------------------------------------------------
+        # 3) ETIDM: items approved by Digital Guild,
+        #    not yet flagged into ETIDM
+        # -----------------------------------------------------------------
+        elif current_role == "ETIDM":
+            dg_is_in, dg_status, _, dg_decision_at = stage_cols("DigitalGuild")
+            et_is_in, et_status, _, _ = stage_cols("ETIDM")
+
+            backlog_df = con.execute(
+                f"""
+                SELECT *
+                FROM approval
+                WHERE {flag_true_sql(dg_is_in)} = TRUE
+                  AND CAST({dg_status} AS VARCHAR) = 'Approved'
+                  AND TRY_CAST({dg_decision_at} AS TIMESTAMP) IS NOT NULL
+                  AND {flag_true_sql(et_is_in)} = FALSE
+                  AND COALESCE(CAST({et_status} AS VARCHAR), '') IN ('', 'Pending')
+                """
+            ).df()
+
+        # -----------------------------------------------------------------
+        # Anything else ⇒ empty
+        # -----------------------------------------------------------------
+        else:
+            backlog_df = con.execute("SELECT * FROM approval WHERE 1=0").df()
+
+    # -------- everything BELOW this stays very similar --------
+    if backlog_df.empty:
+        st.info("No items available for intake.")
+    else:
+        st.dataframe(
+            backlog_df[["Sanction_ID", "Value", "Overall_status"]],
+            use_container_width=True,
+        )
+
+        intake_ids = st.multiselect(
+            "Select Sanction_IDs to intake:",
+            backlog_df["Sanction_ID"].astype(str).tolist(),
+        )
+
+        if st.button(f"Move selected to {role_display_name(current_role)}"):
+            if intake_ids:
+                if current_role in PRE_REVIEW_ROLES:
+                    # 🔹 push into ALL 5 pre-review stages at once
+                    set_pre_review_flags_inplace(df, intake_ids)
+                elif current_role in ("DigitalGuild", "ETIDM"):
+                    # 🔹 for these, move into their single stage
+                    set_stage_flags_inplace(df, intake_ids, current_role)
+
+                # Persist and refresh registration so queries see updates immediately
+                df.to_csv(CSV_PATH, index=False)
+                try:
+                    con.unregister("approval")
+                except Exception:
+                    pass
+                con.register("approval", df)
+
+                st.success(f"Moved {len(intake_ids)} to {role_display_name(current_role)}")
+                st.rerun()
+
+
