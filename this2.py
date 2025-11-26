@@ -29,48 +29,114 @@ tracker_df.loc[mask, "pre_review_approved_count"] = pre_review_approval_count(ro
 
 # after tracker_df.loc[mask, meta["status"]] = new_status, etc.
 
-row_now = tracker_df.loc[mask].iloc[0]  # fresh snapshot including this decision
+# =========================================================
+# STAGE ACTIONS - Sticky Action Bar (ROLE-LOCKED)
+# =========================================================
 
-if new_status == "Approved":
-    tracker_df.loc[mask, decision_field] = when
+# Internal code for this user's stage (e.g. "HeadDataAI")
+current_stage = _current_internal_role()
 
-    # PRE-DIGITAL GUILD reviewers
-    if current_stage in PRE_REVIEW_STAGES:
-        # Optional: keep a numeric count column
-        tracker_df.loc[mask, "pre_review_approved_count"] = pre_review_approval_count(row_now)
+# Pretty label for UI (e.g. "Head of Data & AI")
+current_stage_label = _current_stage_label_for_role()
 
-        if all_pre_reviewers_approved(row_now):
-            # All 5 have approved -> move into Digital Guild
-            tracker_df.loc[mask, "Current Stage"] = "Digital Guild"
-            tracker_df.loc[mask, "Overall_status"] = "In progress"
+# Columns for this stage (by internal key)
+meta = STAGE_KEYS.get(current_stage, {})
+existing_status = str(t_row.get(meta.get("status", ""), "Pending"))
 
-            # only Digital Guild sees it in Actions now
-            for label, m in STAGE_KEYS.items():
-                tracker_df.loc[mask, m["flag"]] = (label == "Digital Guild")
-        else:
-            # Still waiting for other teams -> do NOT change Current Stage or flags
-            pass
+# ----- Header (Big + Bold + Grey status) -----
+st.markdown(
+    f"""
+    <div style="margin-bottom:10px;">
+        <span style="font-size:1.8rem; font-weight:700;">
+            Stage Actions | {current_stage_label}
+        </span><br>
+        <span style="color:#6c757d; font-size:1.1rem;">
+            Current status:
+            <span class="badge {_pill_class(existing_status)}">
+                {existing_status}
+            </span>
+        </span>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
 
-    # DIGITAL GUILD -> ETIDM
-    elif current_stage == "Digital Guild":
-        # this is your "digital guild flag == 1" condition in practice:
-        # they clicked Approve on their own stage.
-        tracker_df.loc[mask, "Current Stage"] = "ETIDM"
-        tracker_df.loc[mask, "Overall_status"] = "In progress"
-        for label, m in STAGE_KEYS.items():
-            tracker_df.loc[mask, m["flag"]] = (label == "ETIDM")
+# =========================================================
+# Permissions + stage configured check
+# =========================================================
+if current_stage not in STAGE_KEYS:
+    # This internal stage has no mapping in STAGE_KEYS
+    st.info("This stage has no configured actions.")
+    role_can_act = False
+else:
+    # User's internal role
+    user_internal_role = _current_internal_role()
+    user_stage_label = _current_stage_label_for_role()
 
-    # ETIDM -> fully approved
-    elif current_stage == "ETIDM":
-        tracker_df.loc[mask, "Overall_status"] = "Approved"
-        for label, m in STAGE_KEYS.items():
-            tracker_df.loc[mask, m["flag"]] = False
+    # Only allow action if their internal role matches the stage
+    role_can_act = (user_internal_role == current_stage)
 
+    if not role_can_act:
+        st.warning(
+            f"Your role (**{user_stage_label}**) cannot act on "
+            f"**{current_stage_label}**."
+        )
 
+# =========================================================
+# DECISION FORM
+# =========================================================
+with st.form(f"form_{current_stage}"):
 
+    # 1. Decision
+    decision = st.radio(
+        "**Choose Your Action [Approve/Reject/Request changes]:**",
+        ["Approve ✓", "Reject ✗", "Request changes ✎"],
+        index=0,
+        disabled=not role_can_act,
+    )
 
+    # 2. Rating
+    rating_stars = st.selectbox(
+        "**Rating (optional):**",
+        ["⭐⭐⭐⭐⭐", "⭐⭐⭐⭐", "⭐⭐⭐", "⭐⭐", "⭐", "-"],
+        index=0,
+        disabled=not role_can_act,
+    )
+    rating = rating_stars.count("⭐")
 
+    # 3. Assigned To + Decision Time
+    col1, col2 = st.columns(2)
+    with col1:
+        assigned_to = st.text_input(
+            "**Assign to [Email/Name]:**",
+            disabled=not role_can_act,
+        )
+    with col2:
+        when = st.text_input(
+            "**Decision time:**",
+            value=_now_iso(),
+            help="Auto-filled, editable.",
+            disabled=not role_can_act,
+        )
 
+    # 4. Comments
+    comment = st.text_area(
+        "**Comments / Rationale**",
+        placeholder="Add remarks for documentation.",
+        disabled=not role_can_act,
+    )
+
+    # 5. Buttons (right aligned)
+    spacer, col_buttons = st.columns([0.77, 0.23])
+    b_reset, b_submit = col_buttons.columns([0.47, 0.53])
+
+    with b_reset:
+        cancel = st.form_submit_button("Reset form", disabled=not role_can_act)
+
+    with b_submit:
+        submitted = st.form_submit_button(
+            "Submit decision", disabled=not role_can_act
+        )
 
 
 # =========================================================
@@ -303,3 +369,4 @@ for _, r in filtered_df.reset_index(drop=True).iterrows():
             st.rerun()
 
 st.markdown("</div>", unsafe_allow_html=True)
+
