@@ -1,16 +1,5 @@
-# Internal stage codes (used in logic)
-STAGES = [
-    "HeadDataAI",
-    "DataGovIA",
-    "ArchAssurance",
-    "Finance",
-    "Regulatory",
-    "DigitalGuild",
-    "ETIDM",
-]
-
-# Pre-Digital Guild reviewers (parallel)
-PRE_REVIEW_STAGES = [
+# End-to-end flow ordering (internal codes)
+PRE_REVIEW_ROLES: List[str] = [
     "HeadDataAI",
     "DataGovIA",
     "ArchAssurance",
@@ -18,47 +7,49 @@ PRE_REVIEW_STAGES = [
     "Regulatory",
 ]
 
-# Map *internal* stage codes -> underlying tracker columns
-# (DataGovIA + ArchAssurance reuse the old data_guild_* / SDA_* columns)
-STAGE_KEYS = {
+ROLE_FLOW: List[str] = PRE_REVIEW_ROLES + ["DigitalGuild", "ETIDM"]
+
+
+
+STAGE_MAP: Dict[str, Dict[str, str]] = {
     "HeadDataAI": {
-        "flag": "is_in_head_data_ai",
+        "is_in": "is_in_head_data_ai",
         "status": "head_data_ai_status",
         "assigned_to": "head_data_ai_assigned_to",
         "decision_at": "head_data_ai_decision_at",
     },
-    "DataGovIA": {  # re-using existing data_guild_* columns
-        "flag": "is_in_data_guild",
+    "DataGovIA": {
+        "is_in": "is_in_data_guild",           # reuse old data_guild_* columns
         "status": "data_guild_status",
         "assigned_to": "data_guild_assigned_to",
         "decision_at": "data_guild_decision_at",
     },
-    "ArchAssurance": {  # re-using existing SDA_* columns
-        "flag": "is_in_SDA",
+    "ArchAssurance": {
+        "is_in": "is_in_SDA",                  # reuse old SDA_* columns
         "status": "SDA_status",
         "assigned_to": "SDA_assigned_to",
         "decision_at": "SDA_decision_at",
     },
     "Finance": {
-        "flag": "is_in_finance",
+        "is_in": "is_in_finance",
         "status": "finance_status",
         "assigned_to": "finance_assigned_to",
         "decision_at": "finance_decision_at",
     },
     "Regulatory": {
-        "flag": "is_in_regulatory",
+        "is_in": "is_in_regulatory",
         "status": "regulatory_status",
         "assigned_to": "regulatory_assigned_to",
         "decision_at": "regulatory_decision_at",
     },
     "DigitalGuild": {
-        "flag": "is_in_digital_guild",
+        "is_in": "is_in_digital_guild",
         "status": "digital_guild_status",
         "assigned_to": "digital_guild_assigned_to",
         "decision_at": "digital_guild_decision_at",
     },
     "ETIDM": {
-        "flag": "is_in_etidm",
+        "is_in": "is_in_etidm",
         "status": "etidm_status",
         "assigned_to": "etidm_assigned_to",
         "decision_at": "etidm_decision_at",
@@ -69,141 +60,162 @@ STAGE_KEYS = {
 
 
 
-def _current_internal_role() -> str:
+
+
+
+
+
+
+def visibility_filter_for(role: str) -> str:
     """
-    Returns the internal stage code this user represents.
-    e.g. 'HeadDataAI', 'DataGovIA', 'ArchAssurance', 'Finance',
-         'Regulatory', 'DigitalGuild', 'ETIDM'.
+    Return a SQL WHERE fragment controlling what this role sees
+    in their dashboard.
     """
-    raw = (st.session_state.get("user_role") or "HeadDataAI").strip()
+    is_in_col, status_col, _, decision_col = stage_cols(role)
 
-    # 1) Already one of the internal codes?
-    if raw in STAGES:
-        return raw
-
-    # 2) If it's a UI label, map to internal
-    label_map = {
-        "Head of Data & AI": "HeadDataAI",
-        "DG & IA": "DataGovIA",
-        "Architectural Assurance": "ArchAssurance",
-        "Finance": "Finance",
-        "Regulatory": "Regulatory",
-        "Digital Guild": "DigitalGuild",
-        "ETIDM": "ETIDM",
-    }
-    if raw in label_map:
-        return label_map[raw]
-
-    # 3) Legacy mapping from old roles (SDA / DataGuild / etc.)
-    legacy_map = {
-        "SDA": "ArchAssurance",
-        "DataGuild": "DataGovIA",
-        "DigitalGuild": "DigitalGuild",
-        "ETIDM": "ETIDM",
-    }
-    if raw in legacy_map:
-        return legacy_map[raw]
-
-    # 4) Fallback from email (best effort)
-    e = (st.session_state.get("user_email", "") or "").lower()
-    if "headdata" in e or "head-of-data" in e:
-        return "HeadDataAI"
-    if "datagov" in e or "dgia" in e:
-        return "DataGovIA"
-    if "arch" in e or "sda" in e:
-        return "ArchAssurance"
-    if "finance" in e:
-        return "Finance"
-    if "reg" in e:
-        return "Regulatory"
-    if "digitalguild" in e or "digital" in e:
-        return "DigitalGuild"
-    if "etidm" in e:
-        return "ETIDM"
-
-    # 5) Hard default
-    return "HeadDataAI"
-
-
-
-
-
-def _current_stage_label_for_role() -> str:
-    internal = _current_internal_role()
-    return {
-        "HeadDataAI": "Head of Data & AI",
-        "DataGovIA": "DG & IA",
-        "ArchAssurance": "Architectural Assurance",
-        "Finance": "Finance",
-        "Regulatory": "Regulatory",
-        "DigitalGuild": "Digital Guild",
-        "ETIDM": "ETIDM",
-    }.get(internal, "Head of Data & AI")
-
-
-
-
-
-# ============================================================
-# STAGE ACTIONS – Sticky Action Bar (ROLE-LOCKED)
-# ============================================================
-
-# Internal code for this user's stage (e.g. "HeadDataAI")
-current_stage = _current_internal_role()
-
-# Pretty label for UI (e.g. "Head of Data & AI")
-current_stage_label = _current_stage_label_for_role()
-
-# Columns for this stage
-meta = STAGE_KEYS.get(current_stage, {})
-existing_status = str(t_row.get(meta.get("status", ""), "Pending"))
-
-# ----- Header (Big + Bold + Grey status) -----
-st.markdown(
-    f"""
-    <div style='margin-bottom:10px;'>
-      <span style='font-size:1.8rem;font-weight:700;'>
-        Stage Actions | {current_stage_label}
-      </span><br>
-      <span style='color:#6c757d;font-size:1.1rem;'>
-        Current status:
-        <span class="badge {_pill_class(existing_status)}">
-          {existing_status}
-        </span>
-      </span>
-    </div>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ============================================================
-# Permissions + stage configured check
-# ============================================================
-
-if current_stage not in STAGE_KEYS:
-    # This internal stage has no mapping in STAGE_KEYS
-    st.info("This stage has no configured actions.")
-    role_can_act = False
-else:
-    # User's internal role (same helper, but kept for clarity)
-    user_internal_role = _current_internal_role()
-    user_stage_label = _current_stage_label_for_role()
-
-    # Only allow action if their internal role matches the stage
-    role_can_act = (user_internal_role == current_stage)
-
-    if not role_can_act:
-        st.warning(
-            f"Your role (**{user_stage_label}**) cannot act on "
-            f"**{current_stage_label}**."
+    # 1) Pre-Digital reviewers:
+    #   - see anything flagged into *their* stage
+    #   - that has not yet entered Digital Guild or ETIDM
+    if role in PRE_REVIEW_ROLES:
+        return (
+            f"{flag_true_sql(is_in_col)} = TRUE "
+            f"AND {flag_true_sql('is_in_digital_guild')} = FALSE "
+            f"AND {flag_true_sql('is_in_etidm')} = FALSE"
         )
 
+    # 2) Digital Guild: only show items that are in Digital Guild but not yet in ETIDM
+    if role == "DigitalGuild":
+        return (
+            f"{flag_true_sql('is_in_digital_guild')} = TRUE "
+            f"AND {flag_true_sql('is_in_etidm')} = FALSE"
+        )
+
+    # 3) ETIDM: only show items that are in ETIDM
+    if role == "ETIDM":
+        return f"{flag_true_sql('is_in_etidm')} = TRUE"
+
+    # Fallback (shouldn't really be hit)
+    return f"{flag_true_sql(is_in_col)} = TRUE"
 
 
 
 
 
-FEEDBACK_HISTORY_PATH = os.getenv(
-    "FEEDBACK_HISTORY_PATH", 
-    "sanction_database/feedback.csv"
-)
+
+def set_pre_review_flags_inplace(df: pd.DataFrame, ids: List[str]) -> None:
+    """
+    When we move items out of submitter intake, we push them
+    into ALL 5 pre-Digital stages at once.
+    """
+    id_list = [str(x) for x in ids]
+    mask = df["Sanction_ID"].astype(str).isin(id_list)
+
+    # (flag_col, status_col, assigned_col)
+    pre_cols = [
+        ("is_in_head_data_ai", "head_data_ai_status", "head_data_ai_assigned_to"),
+        ("is_in_data_guild",   "data_guild_status",   "data_guild_assigned_to"),
+        ("is_in_SDA",          "SDA_status",          "SDA_assigned_to"),
+        ("is_in_finance",      "finance_status",      "finance_assigned_to"),
+        ("is_in_regulatory",   "regulatory_status",   "regulatory_assigned_to"),
+    ]
+
+    for flag_col, status_col, assigned_col in pre_cols:
+        if flag_col in df.columns:
+            df.loc[mask, flag_col] = 1
+        if status_col in df.columns:
+            df.loc[mask, status_col] = (
+                df.loc[mask, status_col]
+                .fillna("Pending")
+                .replace("", "Pending")
+            )
+        if assigned_col in df.columns:
+            df.loc[mask, assigned_col] = None
+
+    # no longer considered raw submissions
+    if "is_submitter" in df.columns:
+        df.loc[mask, "is_submitter"] = 0
+
+    # set high-level status
+    if "Overall_status" in df.columns:
+        df.loc[mask, "Overall_status"] = "In pre-review"
+
+
+
+
+
+
+
+st.markdown("---")
+st.markdown(f"### Intake ({role_display_name(current_role)})")
+
+if con is not None:
+    if current_role in PRE_REVIEW_ROLES:
+        # One shared backlog: raw submissions not yet pushed into pre-review
+        backlog_df = con.execute(
+            f"""
+            SELECT *
+            FROM approval
+            WHERE TRY_CAST(is_submitter AS BIGINT) = 1
+              AND {flag_true_sql('is_in_head_data_ai')} = FALSE
+              AND {flag_true_sql('is_in_data_guild')} = FALSE
+              AND {flag_true_sql('is_in_SDA')} = FALSE
+              AND {flag_true_sql('is_in_finance')} = FALSE
+              AND {flag_true_sql('is_in_regulatory')} = FALSE
+            """
+        ).df()
+    elif current_role == "DigitalGuild":
+        # Items that have finished pre-review and are ready to enter Digital Guild
+        backlog_df = con.execute(
+            f"""
+            SELECT *
+            FROM approval
+            WHERE {flag_true_sql('is_in_digital_guild')} = FALSE
+              AND {flag_true_sql('is_in_etidm')} = FALSE
+              AND head_data_ai_status = 'Approved'
+              AND data_guild_status = 'Approved'
+              AND SDA_status = 'Approved'
+              AND finance_status = 'Approved'
+              AND regulatory_status = 'Approved'
+            """
+        ).df()
+    elif current_role == "ETIDM":
+        # Items approved by Digital Guild but not yet in ETIDM
+        backlog_df = con.execute(
+            f"""
+            SELECT *
+            FROM approval
+            WHERE {flag_true_sql('is_in_digital_guild')} = TRUE
+              AND digital_guild_status = 'Approved'
+              AND {flag_true_sql('is_in_etidm')} = FALSE
+            """
+        ).df()
+    else:
+        backlog_df = df.iloc[0:0].copy()
+else:
+    backlog_df = df.iloc[0:0].copy()
+
+
+
+
+
+
+if st.button(f"Move selected to {role_display_name(current_role)}"):
+    if intake_ids:
+        if current_role in PRE_REVIEW_ROLES:
+            # push into ALL 5 pre-review stages
+            set_pre_review_flags_inplace(df, intake_ids)
+        elif current_role in ("DigitalGuild", "ETIDM"):
+            # for these, we can still use the per-stage helper
+            set_stage_flags_inplace(df, intake_ids, current_role)
+
+        # Persist to CSV & refresh registration
+        df.to_csv(CSV_PATH, index=False)
+        if con is not None:
+            try:
+                con.unregister("approval")
+            except Exception:
+                pass
+            con.register("approval", df)
+
+        st.success(f"Moved {len(intake_ids)} item(s) to {role_display_name(current_role)}")
+        st.rerun()
