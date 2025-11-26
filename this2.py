@@ -144,13 +144,21 @@ def _current_stage_label_for_role() -> str:
 
 
 
-"Current Stage": _current_stage_label_for_role(),
+# ============================================================
+# STAGE ACTIONS – Sticky Action Bar (ROLE-LOCKED)
+# ============================================================
+
+# Internal code for this user's stage (e.g. "HeadDataAI")
 current_stage = _current_internal_role()
+
+# Pretty label for UI (e.g. "Head of Data & AI")
 current_stage_label = _current_stage_label_for_role()
 
+# Columns for this stage
 meta = STAGE_KEYS.get(current_stage, {})
 existing_status = str(t_row.get(meta.get("status", ""), "Pending"))
 
+# ----- Header (Big + Bold + Grey status) -----
 st.markdown(
     f"""
     <div style='margin-bottom:10px;'>
@@ -159,7 +167,7 @@ st.markdown(
       </span><br>
       <span style='color:#6c757d;font-size:1.1rem;'>
         Current status:
-        <span class='badge {_pill_class(existing_status)}'>
+        <span class="badge {_pill_class(existing_status)}">
           {existing_status}
         </span>
       </span>
@@ -168,10 +176,26 @@ st.markdown(
     unsafe_allow_html=True,
 )
 
+# ============================================================
+# Permissions + stage configured check
+# ============================================================
+
+if current_stage not in STAGE_KEYS:
+    # This internal stage has no mapping in STAGE_KEYS
+    st.info("This stage has no configured actions.")
+    role_can_act = False
+else:
+    # User's internal role (same helper, but kept for clarity)
+    user_internal_role = _current_internal_role()
+    user_stage_label = _current_stage_label_for_role()
+
+    # Only allow action if their internal role matches the stage
+    role_can_act = (user_internal_role == current_stage)
+
+    if not role_can_act:
+        st.warning(
+            f"Your role (**{user_stage_label}**) cannot act on "
+            f"**{current_stage_label}**."
+        )
 
 
-
-if not role_can_act:
-    st.warning(
-        f"Your role (**{user_stage_label}**) cannot act on **{current_stage_label}**."
-    )
