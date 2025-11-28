@@ -370,3 +370,32 @@ for _, r in filtered_df.reset_index(drop=True).iterrows():
 
 st.markdown("</div>", unsafe_allow_html=True)
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    decision_key = f"decision_done_{sid}_{current_stage}"
+
+    # If we've already processed this decision, ignore further clicks
+    if st.session_state.get(decision_key, False):
+        st.warning("This decision has already been saved. No further actions will be taken.")
+        st.stop()
+
+    # Mark this decision as processed
+    st.session_state[decision_key] = True
