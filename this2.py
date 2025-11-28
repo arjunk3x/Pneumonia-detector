@@ -399,3 +399,111 @@ st.markdown("</div>", unsafe_allow_html=True)
 
     # Mark this decision as processed
     st.session_state[decision_key] = True
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# =======================
+# LOAD DATA
+# =======================
+
+sanctions_df = _read_csv(SANCTIONS_PATH)
+tracker_df   = _ensure_tracker_columns(_read_csv(APPROVER_TRACKER_PATH))
+
+if sanctions_df.empty:
+    st.error(f"{SANCTIONS_PATH} not found or empty.")
+    st.stop()
+
+if tracker_df.empty:
+    st.error(f"{APPROVER_TRACKER_PATH} not found or empty.")
+    st.stop()
+
+# --- NORMALISE COLUMN NAME ('Sanction_ID' → 'Sanction ID') ---
+if "Sanction_ID" in sanctions_df.columns and "Sanction ID" not in sanctions_df.columns:
+    sanctions_df.rename(columns={"Sanction_ID": "Sanction ID"}, inplace=True)
+# --------------------------------------------------------------
+
+# Ensure ID columns are strings
+if "Sanction ID" in sanctions_df.columns:
+    sanctions_df["Sanction ID"] = sanctions_df["Sanction ID"].astype(str)
+
+if "Sanction_ID" in tracker_df.columns:
+    tracker_df["Sanction_ID"] = tracker_df["Sanction_ID"].astype(str)
+
+# Lookup sanction row in both files
+s_row = sanctions_df.loc[sanctions_df["Sanction ID"] == sid] if "Sanction ID" in sanctions_df.columns else pd.DataFrame()
+t_row = tracker_df.loc[tracker_df["Sanction_ID"] == sid] if "Sanction_ID" in tracker_df.columns else pd.DataFrame()
+
+s_row = s_row.iloc[0] if not s_row.empty else pd.Series(dtype="object")
+t_row = t_row.iloc[0] if not t_row.empty else pd.Series(dtype="object")
+
+if s_row.empty and t_row.empty:
+    st.error(f"Sanction {sid} not found.")
+    st.stop()
+
+# ===== SUBMISSION VERSION FOR ONE-CLICK GUARD =====
+# We use this so "PT Request Changes → resubmit" creates a NEW version,
+# allowing the approver to decide again
+submitted_version = str(
+    t_row.get("Submitted_at", "") or s_row.get("Submitted", "")
+).strip()
+
+# Build guard key using sanction, stage, and submission version (IMPORTANT)
+DECISION_GUARD_KEY = f"decision_done_{sid}_{current_stage}_{submitted_version}"
+# ==================================================
+
+
+
+
+
+
+
+
+
+
+
+
+
+if submitted:
+
+    # ---------- ONE-TIME CLICK GUARD (per submission version) ----------
+    if st.session_state.get(DECISION_GUARD_KEY, False):
+        st.warning("This decision has already been saved for this submission version.")
+        st.stop()
+
+    # mark this submission version as processed
+    st.session_state[DECISION_GUARD_KEY] = True
+    # -------------------------------------------------------------------
+
+    # 0. Permission guard
+    if not role_can_act:
+        st.error("You are not authorised to perform this action.")
+        st.stop()
+
+    # ... (rest of your submission logic continues as-is)
