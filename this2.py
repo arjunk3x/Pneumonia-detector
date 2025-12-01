@@ -50,4 +50,12 @@ else:
 
 
 
+for stg, m in STAGE_KEYS.items():
+    flag_col = m.get("flag")
+    if not flag_col:
+        continue
+    tracker_df.loc[mask, flag_col] = (stg == "DigitalGuild")
+
+
+
 
