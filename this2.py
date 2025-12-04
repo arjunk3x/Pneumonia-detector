@@ -1,211 +1,49 @@
-# =========================================================
-# BACKEND SUBMISSION LOGIC
-# =========================================================
-if submitted:
+elif current_stage == "DIDM":
+    # DIDM -> ETIDM only if Value > £3m
+    sanction_value = None
+    if "Sanction ID" in sanctions_df.columns and "Value" in sanctions_df.columns:
+        ms_val = sanctions_df["Sanction ID"].astype(str) == sid
+        if ms_val.any():
+            raw_val = str(sanctions_df.loc[ms_val, "Value"].iloc[0])
+            try:
+                sanction_value = float(raw_val.replace(",", ""))
+            except Exception:
+                sanction_value = None
 
-    # 0. Permission guard
-    if not role_can_act:
-        st.error("You are not authorised to perform this action.")
-        st.stop()
+    if sanction_value is not None and sanction_value > 3_000_000:
+        # -------- > £3m: move into ETIDM --------
+        tracker_df.loc[mask, "Current Stage"] = "ETIDM"
+        tracker_df.loc[mask, "Overall_status"] = "In progress"
 
-    # 1. Ensure tracker row exists
-    if tracker_df.empty:
-        tracker_df = pd.DataFrame([{"Sanction_ID": sid}])
+        # 1) initialise ETIDM stage columns
+        etidm_meta = STAGE_KEYS["ETIDM"]
+        etidm_status_col = etidm_meta["status"]        # e.g. "etidm_status"
+        etidm_assigned_col = etidm_meta["assigned_to"] # e.g. "etidm_assigned_to"
+        etidm_decision_col = etidm_meta["decision_at"] # e.g. "etidm_decision_at"
 
-    if "Sanction_ID" not in tracker_df.columns:
-        tracker_df["Sanction_ID"] = ""
+        tracker_df.loc[mask, etidm_status_col] = "Pending"
+        tracker_df.loc[mask, etidm_assigned_col] = ""
+        tracker_df.loc[mask, etidm_decision_col] = ""
 
-    if sid not in tracker_df["Sanction_ID"].astype(str).tolist():
-        tracker_df = pd.concat(
-            [tracker_df, pd.DataFrame([{"Sanction_ID": sid}])],
-            ignore_index=True,
-        )
-
-    # normalise + locate current row
-    tracker_df = _ensure_tracker_columns(tracker_df)
-    mask = tracker_df["Sanction_ID"].astype(str) == sid
-    _row = tracker_df.loc[mask].iloc[0]
-
-    meta = STAGE_KEYS[current_stage]
-    status_col = meta["status"]
-    assigned_col = meta["assigned_to"]
-    flag_field = meta["flag"]
-    decision_field = meta["decision_at"]
-
-    prev_status = str(_row.get(status_col, ""))
-
-    # 2. Map decision -> new_status
-    dec_lower = decision.lower()
-    if "approve" in dec_lower:
-        new_status = "Approved"
-    elif "reject" in dec_lower:
-        new_status = "Rejected"
-    else:
-        # your "request changes" label
-        new_status = "Request Changes"
-
-    # 2b. FINAL decision guard – ONLY for Approve / Reject
-    if new_status in ("Approved", "Rejected"):
-        decision_key = f"decision_done_{sid}_{current_stage}"
-
-        if st.session_state.get(decision_key, False):
-            st.warning(
-                "This sanction has already received a final decision at this stage. "
-                "No further Approve/Reject actions can be taken."
-            )
-            st.stop()
-
-        # Mark this sanction+stage as finally decided
-        st.session_state[decision_key] = True
-
-    # 2c. Prevent re-submission when already rejected
-    if new_status == "Rejected" and prev_status == "Rejected":
-        st.warning("This sanction has already been rejected. No further actions can be taken.")
-        st.stop()
-
-    # 3. Basic field updates
-    tracker_df.loc[mask, status_col] = new_status
-    tracker_df.loc[mask, assigned_col] = assigned_to
-    tracker_df.loc[mask, "last_comment"] = comment
-
-    # 4. Stage progression logic (using new_status)
-    # ---------- APPROVED ----------
-    if new_status == "Approved":
-        # Mark this stage as completed
-        tracker_df.loc[mask, decision_field] = _now_iso()
-        tracker_df.loc[mask, flag_field] = False  # this team no longer has it in Actions
-
-        # Re-read the row after updating this stage
-        row_after = tracker_df.loc[mask].iloc[0]
-
-        if current_stage in PRE_REVIEW_STAGES:
-            # Parallel reviewers: only move on when ALL 5 have approved
-            if all_pre_reviewers_approved(row_after):
-                # Move into Digital Guild
-                tracker_df.loc[mask, "Current Stage"] = "DigitalGuild"
-                tracker_df.loc[mask, "Overall_status"] = "In progress"
-
-                # Turn on only Digital Guild flag
-                for stg, m in STAGE_KEYS.items():
-                    flag_col = m.get("flag")
-                    if not flag_col:
-                        continue
-                    tracker_df.loc[mask, flag_col] = (stg == "DigitalGuild")
-            else:
-                # Still waiting for other reviewers
-                tracker_df.loc[mask, "Overall_status"] = "In progress"
-
-        elif current_stage == "DigitalGuild":
-            # Digital Guild -> DIDM
-            tracker_df.loc[mask, "Current Stage"] = "DIDM"
-            tracker_df.loc[mask, "Overall_status"] = "In progress"
-            for stg, m in STAGE_KEYS.items():
-                flag_col = m.get("flag")
-                if not flag_col:
-                    continue
-                tracker_df.loc[mask, flag_col] = (stg == "DIDM")
-
-        elif current_stage == "DIDM":
-            # DIDM -> ETIDM only if Value > £3m
-            sanction_value = None
-            if "Sanction ID" in sanctions_df.columns and "Value" in sanctions_df.columns:
-                ms_val = sanctions_df["Sanction ID"].astype(str) == sid
-                if ms_val.any():
-                    raw_val = str(sanctions_df.loc[ms_val, "Value"].iloc[0])
-                    try:
-                        # strip commas etc.
-                        sanction_value = float(raw_val.replace(",", ""))
-                    except Exception:
-                        sanction_value = None
-
-            if sanction_value is not None and sanction_value > 3_000_000:
-                # Send to ETIDM
-                tracker_df.loc[mask, "Current Stage"] = "ETIDM"
-                tracker_df.loc[mask, "Overall_status"] = "In progress"
-                for stg, m in STAGE_KEYS.items():
-                    flag_col = m.get("flag")
-                    if not flag_col:
-                        continue
-                    tracker_df.loc[mask, flag_col] = (stg == "ETIDM")
-            else:
-                # <= £3m – process finishes at DIDM
-                tracker_df.loc[mask, "Current Stage"] = "DIDM"
-                tracker_df.loc[mask, "Overall_status"] = "Approved"
-                for stg, m in STAGE_KEYS.items():
-                    flag_col = m.get("flag")
-                    if not flag_col:
-                        continue
-                    tracker_df.loc[mask, flag_col] = False
-
-        elif current_stage == "ETIDM":
-            # Final approval (only high-value sanctions reach here)
-            tracker_df.loc[mask, "Overall_status"] = "Approved"
-            for stg, m in STAGE_KEYS.items():
-                flag_col = m.get("flag")
-                if not flag_col:
-                    continue
-                tracker_df.loc[mask, flag_col] = False
-
-    # ---------- REJECTED ----------
-    elif new_status == "Rejected":
-        tracker_df.loc[mask, decision_field] = _now_iso()
-        tracker_df.loc[mask, "Overall_status"] = "Rejected"
-        tracker_df.loc[mask, "Current Stage"] = current_stage
+        # 2) flags: only ETIDM is active (is_in_etidm = 1)
         for stg, m in STAGE_KEYS.items():
             flag_col = m.get("flag")
             if not flag_col:
                 continue
-            tracker_df.loc[mask, flag_col] = False
+            tracker_df.loc[mask, flag_col] = int(stg == "ETIDM")
 
-    # ---------- REQUEST CHANGES ----------
-    else:  # "Request Changes"
-        tracker_df.loc[mask, decision_field] = ""
-        tracker_df.loc[mask, "Overall_status"] = "Request Changes"
-        tracker_df.loc[mask, "Current Stage"] = current_stage
+    else:
+        # -------- ≤ £3m: process ends at DIDM --------
+        tracker_df.loc[mask, "Current Stage"] = "DIDM"
+        tracker_df.loc[mask, "Overall_status"] = "Approved"
 
-        # Reset only this team's "is_in_xxx" flag to 0 so it disappears
-        team_flag_field = meta["flag"]
-        tracker_df.loc[mask, team_flag_field] = 0
+        didm_meta = STAGE_KEYS["DIDM"]
+        didm_status_col = didm_meta["status"]          # e.g. "didm_status"
+        tracker_df.loc[mask, didm_status_col] = "Approved"
 
-    # 5. Persist tracker CSV (ONLY here)
-    _write_csv(tracker_df, APPROVER_TRACKER_PATH)
-
-    # 6. Mirror to sanctions view
-    if "Sanction ID" in sanctions_df.columns:
-        ms = sanctions_df["Sanction ID"].astype(str) == sid
-        sanctions_df.loc[ms, "Current Stage"] = tracker_df.loc[mask, "Current Stage"].iloc[0]
-        sanctions_df.loc[ms, "Status"] = tracker_df.loc[mask, "Overall_status"].iloc[0]
-        _write_csv(sanctions_df, SANCTIONS_PATH)
-
-    # 7. Notifications (ONLY inside submit)
-    if new_status == "Approved":
-        add_notification(
-            sanction_id=sid,
-            team=current_stage,
-            message=f"Sanction {sid} approved by {current_stage}.",
-        )
-    elif new_status == "Rejected":
-        add_notification(
-            sanction_id=sid,
-            team=current_stage,
-            message=f"Sanction {sid} rejected by {current_stage}.",
-        )
-    # (no notification for Request Changes unless you want one)
-
-    # 8. Feedback log
-    import uuid
-    feedback = {
-        "comment_id": str(uuid.uuid4()),
-        "sanction_id": sid,
-        "stage": current_stage,
-        "rating": rating,
-        "comment": comment,
-        "username": assigned_to,
-        "created_at": _now_iso(),
-    }
-    save_fb(feedback)
-
-    # 9. Finish
-    st.success(f"Saved decision for {sid} at {current_stage} [{new_status}]")
-    st.toast("Updated ✓")
-    st.stop()
+        # clear all is_in_* flags (no more Actions anywhere)
+        for stg, m in STAGE_KEYS.items():
+            flag_col = m.get("flag")
+            if not flag_col:
+                continue
+            tracker_df.loc[mask, flag_col] = 0
