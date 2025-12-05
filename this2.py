@@ -1,57 +1,47 @@
-    elif current_stage == "DIDM":
-        # -------------------------------------------------
-        # DIDM -> ETIDM only if Value > £3m
-        # Value is stored in approver_tracker as column "Value"
-        # -------------------------------------------------
-        sanction_value = None
+# 8. Feedback log (includes version from Sanction view)
+import uuid
+version_val = ""
 
-        if "Value" in tracker_df.columns:
+# Try to read version from sanctions_df (Sanction view CSV)
+if "Sanction ID" in sanctions_df.columns:
+    mask_sv = sanctions_df["Sanction ID"].astype(str) == sid
+
+    if mask_sv.any():
+        # Support both 'version' and 'Version' column names
+        version_col = None
+        if "version" in sanctions_df.columns:
+            version_col = "version"
+        elif "Version" in sanctions_df.columns:
+            version_col = "Version"
+
+        if version_col is not None:
             try:
-                # take the value for this sanction_id
-                raw_val = str(tracker_df.loc[mask, "Value"].iloc[0])
-                # strip commas etc and cast to float
-                sanction_value = float(raw_val.replace(",", ""))
+                # Take the highest numeric version for this sanction
+                v = (
+                    pd.to_numeric(
+                        sanctions_df.loc[mask_sv, version_col],
+                        errors="coerce",
+                    )
+                    .max()
+                )
+                if pd.notna(v):
+                    version_val = int(v)
+                else:
+                    # fall back to raw value if numeric conversion fails
+                    version_val = str(
+                        sanctions_df.loc[mask_sv, version_col].max()
+                    )
             except Exception:
-                sanction_value = None  # parsing failed, treat as unknown
+                version_val = str(sanctions_df.loc[mask_sv, version_col].max())
 
-        if sanction_value is not None and sanction_value > 3_000_000:
-            # -------- > £3m: move into ETIDM --------
-            tracker_df.loc[mask, "Current Stage"] = "ETIDM"
-            tracker_df.loc[mask, "Overall_status"] = "In progress"
+feedback = {
+    "sanction_id": sid,
+    "stage": current_stage,
+    "rating": rating,
+    "comment": comment,
+    "username": assigned_to,
+    "version": version_val,
+    "created_at": _now_iso(),
+}
 
-            # Initialise ETIDM stage columns
-            etidm_meta = STAGE_KEYS["ETIDM"]
-            etidm_status_col   = etidm_meta["status"]        # e.g. "etidm_status"
-            etidm_assigned_col = etidm_meta["assigned_to"]   # e.g. "etidm_assigned_to"
-            etidm_decision_col = etidm_meta["decision_at"]   # e.g. "etidm_decision_at"
-            etidm_flag_col     = etidm_meta["flag"]          # e.g. "is_in_etidm"
-
-            tracker_df.loc[mask, etidm_status_col]   = "Pending"
-            tracker_df.loc[mask, etidm_assigned_col] = ""
-            tracker_df.loc[mask, etidm_decision_col] = ""
-
-            # flags: only ETIDM is active
-            for stg, m in STAGE_KEYS.items():
-                flag_col = m.get("flag")
-                if not flag_col:
-                    continue
-                tracker_df.loc[mask, flag_col] = int(stg == "ETIDM")
-
-        else:
-            # -------- ≤ £3m: process ends at DIDM --------
-            tracker_df.loc[mask, "Current Stage"] = "DIDM"
-            tracker_df.loc[mask, "Overall_status"] = "Approved"
-
-            didm_meta = STAGE_KEYS["DIDM"]
-            didm_status_col = didm_meta["status"]     # e.g. "didm_status"
-            didm_flag_col   = didm_meta["flag"]       # e.g. "is_in_didm"
-
-            # Mark DIDM as fully approved
-            tracker_df.loc[mask, didm_status_col] = "Approved"
-
-            # clear **all** flags (no more Actions anywhere)
-            for stg, m in STAGE_KEYS.items():
-                flag_col = m.get("flag")
-                if not flag_col:
-                    continue
-                tracker_df.loc[mask, flag_col] = 0
+save_fb(feedback)
