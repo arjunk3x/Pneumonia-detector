@@ -1,39 +1,36 @@
-# 8. Feedback log (includes version from Sanction view)
 import uuid
+
+# ---- VERSION LOOKUP FROM SANCTION VIEW ----
 version_val = ""
 
-# Try to read version from sanctions_df (Sanction view CSV)
-if "Sanction ID" in sanctions_df.columns:
-    mask_sv = sanctions_df["Sanction ID"].astype(str) == sid
+try:
+    # make sure df is not empty
+    if sanctions_df is not None and not sanctions_df.empty:
+        # ID column is Sanction_ID in sanction_view
+        if "Sanction_ID" in sanctions_df.columns and "Version" in sanctions_df.columns:
+            sid_str = str(sid).strip()
 
-    if mask_sv.any():
-        # Support both 'version' and 'Version' column names
-        version_col = None
-        if "version" in sanctions_df.columns:
-            version_col = "version"
-        elif "Version" in sanctions_df.columns:
-            version_col = "Version"
+            mask_sv = sanctions_df["Sanction_ID"].astype(str).str.strip() == sid_str
 
-        if version_col is not None:
-            try:
-                # Take the highest numeric version for this sanction
-                v = (
-                    pd.to_numeric(
-                        sanctions_df.loc[mask_sv, version_col],
-                        errors="coerce",
-                    )
-                    .max()
-                )
+            if mask_sv.any():
+                # take highest numeric Version for this sanction
+                v = pd.to_numeric(
+                    sanctions_df.loc[mask_sv, "Version"],
+                    errors="coerce",
+                ).max()
+
                 if pd.notna(v):
                     version_val = int(v)
                 else:
-                    # fall back to raw value if numeric conversion fails
+                    # fallback to raw value if numeric fails
                     version_val = str(
-                        sanctions_df.loc[mask_sv, version_col].max()
+                        sanctions_df.loc[mask_sv, "Version"].max()
                     )
-            except Exception:
-                version_val = str(sanctions_df.loc[mask_sv, version_col].max())
+except Exception as e:
+    # optional debug
+    st.write("DEBUG version lookup error:", e)
 
+# ---- BUILD FEEDBACK ROW ----
 feedback = {
     "sanction_id": sid,
     "stage": current_stage,
