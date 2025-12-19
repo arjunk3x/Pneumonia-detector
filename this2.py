@@ -161,6 +161,9 @@ SECTION_TREE = {
 }
 
 
+# =========================================================
+# DECISION FORM (includes document hierarchy selector)
+# =========================================================
 with st.form(f"form_{current_stage}"):
 
     # 1. Decision
@@ -198,37 +201,46 @@ with st.form(f"form_{current_stage}"):
     # 3b. DOCUMENT LOCATION (Heading → Section → Subsection)
     st.markdown("#### Where in the document is this feedback about?")
 
-    # Top-level heading
+    # --- HEADING LEVEL ---
     heading_options = list(SECTION_TREE.keys())
     selected_heading = st.selectbox(
         "Heading",
         heading_options,
+        key="fb_heading",
         disabled=not role_can_act,
     )
 
-    # Section (depends on heading)
+    # --- SECTION LEVEL (depends on heading) ---
     section_options = list(SECTION_TREE[selected_heading].keys())
     selected_section = st.selectbox(
         "Section",
         section_options,
+        key="fb_section",
         disabled=not role_can_act,
     )
 
-    # Subsection (optional, depends on section)
+    # --- SUBSECTION LEVEL (depends on section) ---
     subsection_list = SECTION_TREE[selected_heading][selected_section]
     subsection_options = ["(Whole section)"] + subsection_list
+
     selected_subsection = st.selectbox(
         "Sub-section / field (optional)",
         subsection_options,
         index=0,
+        key="fb_subsection",
         disabled=not role_can_act,
     )
 
-    # Build a single path string (used in CSV)
+    # Build a single path string to save in feedback.csv
     if selected_subsection == "(Whole section)":
         section_path = f"{selected_heading} > {selected_section}"
     else:
-        section_path = f"{selected_heading} > {selected_section} > {selected_subsection}"
+        section_path = (
+            f"{selected_heading} > {selected_section} > {selected_subsection}"
+        )
+
+    # Optional: show what they’re commenting on
+    st.caption(f"Commenting on: `{section_path}`")
 
     # 4. Comments
     comment = st.text_area(
@@ -237,8 +249,19 @@ with st.form(f"form_{current_stage}"):
         disabled=not role_can_act,
     )
 
-    # 5. Buttons (as you already have)
-    ...
+    # 5. Buttons (right side)
+    spacer, col_buttons = st.columns([0.77, 0.23])
+    b_reset, b_submit = col_buttons.columns([0.47, 0.53])
+
+    with b_reset:
+        cancel = st.form_submit_button("Reset form", disabled=not role_can_act)
+
+    with b_submit:
+        submitted = st.form_submit_button(
+            "Submit decision", disabled=not role_can_act
+        )
+
+
 
 
 
