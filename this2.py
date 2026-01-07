@@ -22,21 +22,41 @@ project_full = pd.read_csv(DATA_DIR / "project_full.csv", low_memory=False)
 
 
 
+import pandas as pd
+import numpy as np
+
+# 2) Parse dates (using Activity_Full.csv columns exactly)
 date_cols_activity = [
     "DATADATE", "CREATEDATE", "LASTUPDATEDATE",
     "BASELINESTARTDATE", "PLANNEDSTARTDATE", "ACTUALSTARTDATE",
     "STARTDATE", "EARLYSTARTDATE", "LATESTARTDATE"
 ]
 
-if "FINISHDATE" in activity_full.columns:
-    date_cols_activity.append("FINISHDATE")
-
 for c in date_cols_activity:
+    # only parse if the column exists (safe)
     if c in activity_full.columns:
         activity_full[c] = pd.to_datetime(activity_full[c], errors="coerce")
 
-if "DATADATE" in project_full.columns:
-    project_full["DATADATE"] = pd.to_datetime(project_full["DATADATE"], errors="coerce")
+
+# 2b) Gate event date (best available "gate achieved/forecast" date)
+# Rule:
+# - if ACTUALSTARTDATE exists => treat as achieved date
+# - else use STARTDATE as forecast
+activity_full["gate_event_date"] = (
+    activity_full["ACTUALSTARTDATE"]
+    .fillna(activity_full["STARTDATE"])
+)
+
+# planned slip (current/actual vs planned)
+activity_full["slip_vs_planned_days"] = (
+    activity_full["gate_event_date"] - activity_full["PLANNEDSTARTDATE"]
+).dt.days
+
+# baseline slip (current/actual vs baseline)
+activity_full["slip_vs_baseline_days"] = (
+    activity_full["gate_event_date"] - activity_full["BASELINESTARTDATE"]
+).dt.days
+
 
 
 
@@ -271,3 +291,4 @@ ax.set_xticklabels([pd.Timestamp.fromordinal(int(t)).strftime("%Y-%m-%d") if t >
 
 plt.tight_layout()
 plt.show()
+
