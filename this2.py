@@ -76,19 +76,32 @@ phase_seq.head()
 
 
 
-# Merge activity with code assignments
-act = activity_full.merge(
-    aca[["ACTIVITYID", "ACTIVITYCODETYPENAME", "ACTIVITYCODEVALUE", "ACTIVITYCODEDESCRIPTION", "PROJECTOBJECTID"]],
-    left_on="OBJECTID",
-    right_on="ACTIVITYID",
-    how="left"
+from pyspark.sql import functions as F
+
+# Assume these are Spark DataFrames:
+# activity_full, phase_seq
+
+# Ensure string matching is consistent (cast to string + trim)
+act = (
+    activity_full
+    .withColumn("ID", F.trim(F.col("ID").cast("string")))
 )
 
-# Keep only gate codes in the sequence
-gate_codes = set(phase_seq["Activity Code"].dropna().astype(str))
-act["ACTIVITYCODEVALUE"] = act["ACTIVITYCODEVALUE"].astype(str)
+phase_seq_clean = (
+    phase_seq
+    .withColumn("Activity Code", F.trim(F.col("Activity Code").cast("string")))
+    .select("Activity Code")
+    .dropDuplicates()
+)
 
-act_gate = act[act["ACTIVITYCODEVALUE"].isin(gate_codes)].copy()
+# Keep only gate activities (ID is in the gate code list)
+act_gate = (
+    act.join(
+        phase_seq_clean,
+        act["ID"] == phase_seq_clean["Activity Code"],
+        how="left_semi"   # filters act only; doesn't add columns
+    )
+)
 
 
 
@@ -291,6 +304,7 @@ ax.set_xticklabels([pd.Timestamp.fromordinal(int(t)).strftime("%Y-%m-%d") if t >
 
 plt.tight_layout()
 plt.show()
+
 
 
 
