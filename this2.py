@@ -22,9 +22,6 @@ project_full = pd.read_csv(DATA_DIR / "project_full.csv", low_memory=False)
 
 
 
-import pandas as pd
-import numpy as np
-
 date_cols = [
     "DATADATE", "CREATEDATE", "LASTUPDATEDATE",
     "BASELINESTARTDATE", "PLANNEDSTARTDATE", "ACTUALSTARTDATE",
@@ -33,9 +30,31 @@ date_cols = [
 
 cols_present = [c for c in date_cols if c in activity_full.columns]
 
-activity_full[cols_present] = activity_full[cols_present].apply(
-    lambda s: pd.to_datetime(s, errors="coerce")
-)
+def parse_mixed_excel_dates(s: pd.Series) -> pd.Series:
+    # Make everything string first (preserves things like '01-Sep-25')
+    s_str = s.astype(str).str.strip()
+
+    # Replace common non-date garbage with NA
+    s_str = s_str.replace(
+        {"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "None": pd.NA, "########": pd.NA, "#####": pd.NA},
+        regex=False
+    )
+
+    # Try parse as normal date strings first
+    dt1 = pd.to_datetime(s_str, errors="coerce", dayfirst=True)
+
+    # For anything still NaT, try interpreting as Excel serial numbers
+    # (only where the original looks numeric)
+    is_num = s_str.str.fullmatch(r"\d+(\.\d+)?", na=False)
+    serial = pd.to_numeric(s_str.where(is_num), errors="coerce")
+
+    dt2 = pd.to_datetime(serial, errors="coerce", unit="D", origin="1899-12-30")
+
+    # Combine: prefer dt1, fallback to dt2
+    return dt1.fillna(dt2)
+
+for c in cols_present:
+    activity_full[c] = parse_mixed_excel_dates(activity_full[c])
 
 
 
@@ -272,5 +291,6 @@ ax.set_xticklabels([pd.Timestamp.fromordinal(int(t)).strftime("%Y-%m-%d") if t >
 
 plt.tight_layout()
 plt.show()
+
 
 
