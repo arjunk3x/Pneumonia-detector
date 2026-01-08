@@ -1,310 +1,327 @@
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-from pathlib import Path
+from pyspark.sql import functions as F, Window
 
-plt.rcParams["figure.figsize"] = (12, 6)
-
-
-
-
-DATA_DIR = Path(r"./data")  # change this
-
-activity_full = pd.read_csv(DATA_DIR / "Activity_Full.csv", low_memory=False)
-aca = pd.read_csv(DATA_DIR / "activitycodeassignment.csv", low_memory=False)
-
-# Your phase sequence table exported as CSV (recommended)
-# It must have columns exactly: "Activity Code", "Milestone Description"
-phase_seq = pd.read_csv(DATA_DIR / "phase_sequence.csv", low_memory=False)
-
-# Optional (only if you want project names)
-project_full = pd.read_csv(DATA_DIR / "project_full.csv", low_memory=False)
+def pick_first_existing(df, candidates, required=True):
+    cols = set(df.columns)
+    for c in candidates:
+        if c in cols:
+            return c
+    if required:
+        raise ValueError(f"None of these columns exist: {candidates}")
+    return None
 
 
 
-date_cols = [
-    "DATADATE", "CREATEDATE", "LASTUPDATEDATE",
-    "BASELINESTARTDATE", "PLANNEDSTARTDATE", "ACTUALSTARTDATE",
-    "STARTDATE", "EARLYSTARTDATE", "LATESTARTDATE"
-]
 
-cols_present = [c for c in date_cols if c in activity_full.columns]
 
-def parse_mixed_excel_dates(s: pd.Series) -> pd.Series:
-    # Make everything string first (preserves things like '01-Sep-25')
-    s_str = s.astype(str).str.strip()
+# Required: project id and gate code
+project_col = pick_first_existing(df_activity_full, ["PROJECTOBJECTID", "PROJECTID"])
+gate_col    = pick_first_existing(df_activity_full, ["ID"])  # per your context: ID is gate code
+activity_col = pick_first_existing(df_activity_full, ["OBJECTID", "ACTIVITYOBJECTID", "ACTIVITYID"], required=False)
 
-    # Replace common non-date garbage with NA
-    s_str = s_str.replace(
-        {"": pd.NA, "nan": pd.NA, "NaN": pd.NA, "None": pd.NA, "########": pd.NA, "#####": pd.NA},
-        regex=False
-    )
+# Actual date we use to place gate event on a timeline
+actual_date_col = pick_first_existing(
+    df_activity_full,
+    ["ACTUALSTARTDATE", "STARTDATE", "PLANNEDSTARTDATE", "BASELINESTARTDATE"],
+    required=True
+)
 
-    # Try parse as normal date strings first
-    dt1 = pd.to_datetime(s_str, errors="coerce", dayfirst=True)
-
-    # For anything still NaT, try interpreting as Excel serial numbers
-    # (only where the original looks numeric)
-    is_num = s_str.str.fullmatch(r"\d+(\.\d+)?", na=False)
-    serial = pd.to_numeric(s_str.where(is_num), errors="coerce")
-
-    dt2 = pd.to_datetime(serial, errors="coerce", unit="D", origin="1899-12-30")
-
-    # Combine: prefer dt1, fallback to dt2
-    return dt1.fillna(dt2)
-
-for c in cols_present:
-    activity_full[c] = parse_mixed_excel_dates(activity_full[c])
+# Optional: baseline date for delay analysis
+baseline_date_col = pick_first_existing(df_activity_full, ["BASELINESTARTDATE"], required=False)
 
 
 
 
 
 
-
-
-phase_seq = phase_seq.copy()
-phase_seq["phase_order"] = np.arange(1, len(phase_seq) + 1)
-
-# sanity check
-phase_seq.head()
-
-
-
-
-
-
-
-
-from pyspark.sql import functions as F
-
-# Assume these are Spark DataFrames:
-# activity_full, phase_seq
-
-# Ensure string matching is consistent (cast to string + trim)
 act = (
-    activity_full
-    .withColumn("ID", F.trim(F.col("ID").cast("string")))
+    df_activity_full
+    .withColumn(project_col, F.col(project_col).cast("string"))
+    .withColumn(gate_col, F.trim(F.col(gate_col).cast("string")))
+    .withColumn(actual_date_col, F.to_timestamp(F.col(actual_date_col)))
 )
 
-phase_seq_clean = (
+if baseline_date_col:
+    act = act.withColumn(baseline_date_col, F.to_timestamp(F.col(baseline_date_col)))
+
+
+
+
+
+
+phase_gate_code_col = pick_first_existing(phase_seq, ["Activity Code", "ActivityCode", "GATE_CODE"])
+
+# try to find an order column in phase_seq
+gate_order_col = pick_first_existing(
+    phase_seq,
+    ["SEQUENCE", "SEQ", "ORDER", "STEP", "GATE_ORDER", "PHASE_SEQ"],
+    required=False
+)
+
+gate_dim = (
     phase_seq
-    .withColumn("Activity Code", F.trim(F.col("Activity Code").cast("string")))
-    .select("Activity Code")
-    .dropDuplicates()
-)
-
-# Keep only gate activities (ID is in the gate code list)
-act_gate = (
-    act.join(
-        phase_seq_clean,
-        act["ID"] == phase_seq_clean["Activity Code"],
-        how="left_semi"   # filters act only; doesn't add columns
+    .withColumn("gate_code", F.trim(F.col(phase_gate_code_col).cast("string")))
+    .select(
+        "gate_code",
+        (F.col(gate_order_col).cast("int").alias("gate_order") if gate_order_col else F.lit(None).cast("int").alias("gate_order"))
     )
+    .dropDuplicates(["gate_code"])
 )
 
 
 
 
 
-
-def compute_gate_date(df: pd.DataFrame) -> pd.Series:
-    if "FINISHDATE" in df.columns:
-        return df["FINISHDATE"].fillna(df["ACTUALSTARTDATE"]).fillna(df["STARTDATE"])
-    return df["ACTUALSTARTDATE"].fillna(df["STARTDATE"])
-
-act_gate["gate_date"] = compute_gate_date(act_gate)
+act_gate = act.join(gate_dim.select("gate_code"), act[gate_col] == F.col("gate_code"), "left_semi")
 
 
 
 
 
-latest_datadate = act_gate.groupby("PROJECTOBJECTID")["DATADATE"].transform("max")
-act_gate = act_gate[act_gate["DATADATE"] == latest_datadate].copy()
-
-
-
-
-gate_events = (
-    act_gate.dropna(subset=["gate_date"])
-    .groupby(["PROJECTOBJECTID", "ACTIVITYCODEVALUE"], as_index=False)
-    .agg(gate_date=("gate_date", "min"))
+project_gate_events = (
+    act_gate
+    .where(F.col(actual_date_col).isNotNull())
+    .groupBy(project_col, F.col(gate_col).alias("gate_code"))
+    .agg(F.min(F.col(actual_date_col)).alias("gate_date"))
+    .join(gate_dim, "gate_code", "left")
 )
 
-# Add phase order + description from your sequence table
-gate_events = gate_events.merge(
-    phase_seq.rename(columns={"Activity Code": "ACTIVITYCODEVALUE", "Milestone Description": "phase_name"}),
-    on="ACTIVITYCODEVALUE",
-    how="left"
+
+
+
+
+project_gate_events_latest = (
+    act_gate
+    .where(F.col(actual_date_col).isNotNull())
+    .groupBy(project_col, F.col(gate_col).alias("gate_code"))
+    .agg(F.max(F.col(actual_date_col)).alias("gate_date"))
+    .join(gate_dim, "gate_code", "left")
 )
 
-gate_events = gate_events.sort_values(["PROJECTOBJECTID", "phase_order"])
-gate_events.head()
 
 
 
 
-
-
-gate_events["next_gate_date"] = gate_events.groupby("PROJECTOBJECTID")["gate_date"].shift(-1)
-gate_events["phase_duration_days"] = (gate_events["next_gate_date"] - gate_events["gate_date"]).dt.days
-
-
-
+if gate_order_col:
+    w = Window.partitionBy(project_col).orderBy(F.col("gate_order").asc_nulls_last(), F.col("gate_date"))
+else:
+    w = Window.partitionBy(project_col).orderBy(F.col("gate_date"))
 
 project_timeline = (
-    gate_events.groupby("PROJECTOBJECTID", as_index=False)
+    project_gate_events
+    .withColumn("next_gate_code", F.lead("gate_code").over(w))
+    .withColumn("next_gate_date", F.lead("gate_date").over(w))
+    .withColumn("gate_duration_days", F.datediff("next_gate_date", "gate_date"))
+)
+
+
+
+
+
+gate_summary = (
+    project_timeline
+    .where(F.col("gate_duration_days").isNotNull())
+    .groupBy("gate_code")
     .agg(
-        project_start=("gate_date", "min"),
-        project_end=("gate_date", "max"),
-        gates_present=("ACTIVITYCODEVALUE", "count")
+        F.count("*").alias("n"),
+        F.avg("gate_duration_days").alias("avg_days"),
+        F.expr("percentile_approx(gate_duration_days, 0.5)").alias("median_days"),
+        F.expr("percentile_approx(gate_duration_days, 0.9)").alias("p90_days"),
+        F.expr("percentile_approx(gate_duration_days, 0.95)").alias("p95_days"),
+        F.max("gate_duration_days").alias("max_days"),
+        F.avg(F.when(F.col("gate_duration_days") == 0, 1).otherwise(0)).alias("share_zero")
     )
-)
-project_timeline["project_total_days"] = (project_timeline["project_end"] - project_timeline["project_start"]).dt.days
-
-
-
-
-
-if "OBJECTID" in project_full.columns and "NAME" in project_full.columns:
-    project_timeline = project_timeline.merge(
-        project_full[["OBJECTID", "NAME"]],
-        left_on="PROJECTOBJECTID",
-        right_on="OBJECTID",
-        how="left"
-    )
-
-
-
-
-def add_iqr_outlier_flags(df: pd.DataFrame, group_col: str, value_col: str) -> pd.DataFrame:
-    df = df.copy()
-    q1 = df.groupby(group_col)[value_col].transform(lambda s: s.quantile(0.25))
-    q3 = df.groupby(group_col)[value_col].transform(lambda s: s.quantile(0.75))
-    iqr = q3 - q1
-    df["outlier_threshold"] = q3 + 1.5 * iqr
-    df["is_outlier"] = df[value_col] > df["outlier_threshold"]
-    return df
-
-phase_perf = gate_events.dropna(subset=["phase_duration_days"]).copy()
-phase_perf = add_iqr_outlier_flags(phase_perf, "phase_order", "phase_duration_days")
-
-
-
-
-
-# Build arrays in phase order
-phase_labels = (phase_seq.sort_values("phase_order")["Milestone Description"]).tolist()
-
-data = []
-labels = []
-for _, row in phase_seq.sort_values("phase_order").iterrows():
-    po = row["phase_order"]
-    s = phase_perf.loc[phase_perf["phase_order"] == po, "phase_duration_days"].dropna()
-    if len(s) > 0:
-        data.append(s.values)
-        labels.append(row["Milestone Description"])
-
-plt.figure(figsize=(14, 6))
-plt.boxplot(data, labels=labels, showfliers=True)
-plt.xticks(rotation=45, ha="right")
-plt.ylabel("Phase duration (days)")
-plt.title("Phase duration distribution (gate-to-gate)")
-plt.tight_layout()
-plt.show()
-
-
-
-
-
-# Use project name if available, else PROJECTOBJECTID
-row_label = "NAME" if "NAME" in project_timeline.columns else "PROJECTOBJECTID"
-
-# Merge labels onto phase_perf
-phase_perf_labeled = phase_perf.merge(
-    project_timeline[[ "PROJECTOBJECTID", row_label ]],
-    on="PROJECTOBJECTID",
-    how="left"
+    .orderBy(F.col("p95_days").desc())
 )
 
-pivot = phase_perf_labeled.pivot_table(
-    index=row_label,
-    columns="phase_order",
-    values="phase_duration_days",
-    aggfunc="first"
-).sort_index()
-
-# Convert columns (phase_order) to readable names
-col_map = dict(zip(phase_seq["phase_order"], phase_seq["Milestone Description"]))
-pivot = pivot.rename(columns=col_map)
-
-plt.figure(figsize=(16, 8))
-plt.imshow(pivot.fillna(0).values, aspect="auto")
-plt.colorbar(label="Phase duration (days)")
-plt.yticks(range(len(pivot.index)), pivot.index)
-plt.xticks(range(len(pivot.columns)), pivot.columns, rotation=45, ha="right")
-plt.title("Projects × Phases heatmap (duration in days; 0 = missing)")
-plt.tight_layout()
-plt.show()
+display(gate_summary)   # Databricks table; you can switch to bar chart in UI
 
 
 
 
 
-outliers = phase_perf[phase_perf["is_outlier"]].copy()
-outliers = outliers.sort_values("phase_duration_days", ascending=False).head(20)
-
-# Label bars
-outliers["label"] = outliers["PROJECTOBJECTID"].astype(str) + " | " + outliers["phase_name"].astype(str)
-
-plt.figure(figsize=(14, 6))
-plt.barh(outliers["label"], outliers["phase_duration_days"])
-plt.gca().invert_yaxis()
-plt.xlabel("Days")
-plt.title("Top 20 phase-duration outliers")
-plt.tight_layout()
-plt.show()
 
 
+total_projects = project_gate_events.select(project_col).distinct().count()
 
+completion_funnel = (
+    project_gate_events
+    .groupBy("gate_code")
+    .agg(F.countDistinct(project_col).alias("projects_reached"))
+    .withColumn("total_projects", F.lit(total_projects))
+    .withColumn("reach_rate", F.col("projects_reached") / F.col("total_projects"))
+    .orderBy(F.col("reach_rate").desc())
+)
 
-
-top_projects = project_timeline.sort_values("project_total_days", ascending=False).head(30)
-
-plt.figure(figsize=(14, 6))
-plt.barh(top_projects[row_label].astype(str), top_projects["project_total_days"])
-plt.gca().invert_yaxis()
-plt.xlabel("Total duration (days)")
-plt.title("Top 30 longest projects (first gate → last gate)")
-plt.tight_layout()
-plt.show()
+display(completion_funnel)
 
 
 
 
-# pick a project (longest)
-target_project = project_timeline.sort_values("project_total_days", ascending=False).iloc[0]["PROJECTOBJECTID"]
 
-p = gate_events[gate_events["PROJECTOBJECTID"] == target_project].sort_values("phase_order").copy()
-p = p.dropna(subset=["next_gate_date"])
 
-plt.figure(figsize=(12, 6))
-y = np.arange(len(p))
+transitions = (
+    project_timeline
+    .where(F.col("next_gate_code").isNotNull())
+    .groupBy("gate_code", "next_gate_code")
+    .agg(F.count("*").alias("n_transitions"))
+    .orderBy(F.col("n_transitions").desc())
+)
 
-dur = (p["next_gate_date"] - p["gate_date"]).dt.days
-plt.barh(y, dur, left=p["gate_date"].map(pd.Timestamp.toordinal))
-plt.yticks(y, p["phase_name"])
-plt.xlabel("Time")
-plt.title(f"Phase durations for project {target_project}")
-
-# Convert ordinal axis ticks back to dates
-ax = plt.gca()
-ticks = ax.get_xticks()
-ax.set_xticklabels([pd.Timestamp.fromordinal(int(t)).strftime("%Y-%m-%d") if t > 0 else "" for t in ticks], rotation=30, ha="right")
-
-plt.tight_layout()
-plt.show()
+display(transitions)
 
 
 
 
+
+
+w_last = Window.partitionBy(project_col).orderBy(
+    (F.col("gate_order").desc_nulls_last() if gate_order_col else F.col("gate_date").desc())
+)
+
+stuck_projects = (
+    project_gate_events
+    .withColumn("rn", F.row_number().over(w_last))
+    .where(F.col("rn") == 1)
+    .drop("rn")
+    .withColumn("days_since_last_gate", F.datediff(F.current_timestamp(), F.col("gate_date")))
+    .orderBy(F.col("days_since_last_gate").desc())
+)
+
+display(stuck_projects)
+
+
+
+
+
+
+
+rework = (
+    act_gate
+    .groupBy(project_col, F.col(gate_col).alias("gate_code"))
+    .agg(
+        F.count("*").alias("gate_rows"),
+        (F.countDistinct(activity_col).alias("distinct_activities") if activity_col else F.lit(None).cast("long").alias("distinct_activities")),
+        F.countDistinct(actual_date_col).alias("distinct_gate_dates")
+    )
+)
+
+rework_summary = (
+    rework
+    .groupBy("gate_code")
+    .agg(
+        F.count("*").alias("project_gate_pairs"),
+        F.avg("gate_rows").alias("avg_rows_per_project_gate"),
+        F.expr("percentile_approx(gate_rows, 0.95)").alias("p95_rows"),
+        F.avg(F.when(F.col("gate_rows") > 1, 1).otherwise(0)).alias("share_rework")
+    )
+    .orderBy(F.col("share_rework").desc())
+)
+
+display(rework_summary)
+
+
+
+
+
+
+
+if baseline_date_col:
+    baseline_gate = (
+        act_gate
+        .where(F.col(baseline_date_col).isNotNull())
+        .groupBy(project_col, F.col(gate_col).alias("gate_code"))
+        .agg(F.min(F.col(baseline_date_col)).alias("baseline_gate_date"))
+    )
+
+    gate_delay = (
+        project_gate_events
+        .join(baseline_gate, [project_col, "gate_code"], "left")
+        .withColumn("delay_days", F.datediff("gate_date", "baseline_gate_date"))
+    )
+
+    gate_delay_summary = (
+        gate_delay
+        .where(F.col("delay_days").isNotNull())
+        .groupBy("gate_code")
+        .agg(
+            F.count("*").alias("n"),
+            F.avg("delay_days").alias("avg_delay"),
+            F.expr("percentile_approx(delay_days, 0.5)").alias("median_delay"),
+            F.expr("percentile_approx(delay_days, 0.9)").alias("p90_delay"),
+            F.avg(F.when(F.col("delay_days") > 0, 1).otherwise(0)).alias("share_late")
+        )
+        .orderBy(F.col("avg_delay").desc())
+    )
+
+    display(gate_delay_summary)
+else:
+    print("BASELINESTARTDATE not found; skipping baseline delay analysis.")
+
+
+
+
+
+
+
+gate_bounds = (
+    project_timeline
+    .where(F.col("gate_duration_days").isNotNull())
+    .groupBy("gate_code")
+    .agg(
+        F.expr("percentile_approx(gate_duration_days, 0.25)").alias("q1"),
+        F.expr("percentile_approx(gate_duration_days, 0.75)").alias("q3"),
+    )
+    .withColumn("iqr", F.col("q3") - F.col("q1"))
+    .withColumn("lower", F.col("q1") - F.lit(1.5) * F.col("iqr"))
+    .withColumn("upper", F.col("q3") + F.lit(1.5) * F.col("iqr"))
+)
+
+outliers = (
+    project_timeline
+    .join(gate_bounds, "gate_code", "left")
+    .where(F.col("gate_duration_days").isNotNull())
+    .where((F.col("gate_duration_days") < F.col("lower")) | (F.col("gate_duration_days") > F.col("upper")))
+    .select(project_col, "gate_code", "gate_date", "next_gate_code", "next_gate_date", "gate_duration_days", "lower", "upper")
+    .orderBy(F.col("gate_duration_days").desc())
+)
+
+display(outliers)
+
+
+
+
+
+
+# Null rates for key date fields in gate rows
+date_cols_to_check = [c for c in ["DATADATE", "CREATEDATE", "LASTUPDATEDATE",
+                                 "BASELINESTARTDATE", "PLANNEDSTARTDATE", "ACTUALSTARTDATE",
+                                 "STARTDATE", "EARLYSTARTDATE", "LATESTARTDATE"] if c in df_activity_full.columns]
+
+hygiene_nulls = (
+    df_activity_full
+    .select([F.avg(F.when(F.col(c).isNull(), 1).otherwise(0)).alias(f"null_rate_{c}") for c in date_cols_to_check])
+)
+
+display(hygiene_nulls)
+
+# Suspicious years in actual gate date (gate events)
+hygiene_years = (
+    project_gate_events
+    .withColumn("year", F.year("gate_date"))
+    .groupBy("year")
+    .agg(F.count("*").alias("n"))
+    .orderBy("year")
+)
+
+display(hygiene_years)
+
+# Zero-duration share per gate (already in gate_summary) - but here's explicit:
+zero_duration_by_gate = (
+    project_timeline
+    .where(F.col("gate_duration_days").isNotNull())
+    .groupBy("gate_code")
+    .agg(F.avg(F.when(F.col("gate_duration_days") == 0, 1).otherwise(0)).alias("share_zero"))
+    .orderBy(F.col("share_zero").desc())
+)
+
+display(zero_duration_by_gate)
