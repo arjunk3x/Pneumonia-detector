@@ -238,46 +238,69 @@ display(bench_means_by_unit)
 
 from pyspark.sql import functions as F
 
-# 1) Base filter: only clean benchmark rows
+# Base filter for benchmarking (removes bulk same-day patterns etc.)
 base_df = df_OPPM.filter(F.col("benchmark_eligible") == 1)
 
-# 2) Build one unified "long" dataset of valid cycle-time datapoints
-df_long = (
-    base_df
-    .select(
-        "Project ID",
-        F.when(F.col("seq_a2_b_status") == "OK", F.col("ct_a2_to_b_days")).alias("A2→B"),
-        F.when(F.col("seq_b_c_status")  == "OK", F.col("ct_b_to_c_days")).alias("B→C"),
-        F.when(F.col("seq_c_d_status")  == "OK", F.col("ct_c_to_d_days")).alias("C→D"),
-        F.when(F.col("seq_d_e_status")  == "OK", F.col("ct_d_to_e_days")).alias("D→E"),
-    )
-)
+def bench_stats(df, transition_name):
+    return (df.agg(
+                F.count("*").alias("n_datapoints"),
+                F.expr("percentile_approx(cycle_days, 0.2)").alias("P20_days"),
+                F.expr("percentile_approx(cycle_days, 0.5)").alias("P50_days"),
+                F.expr("percentile_approx(cycle_days, 0.8)").alias("P80_days"),
+                F.round(F.avg("cycle_days"), 1).alias("Mean_days")
+            )
+            .withColumn("transition", F.lit(transition_name))
+           )
 
-# Convert wide -> long: (transition, cycle_days)
-df_long = (
-    df_long
-    .selectExpr(
-        "`Project ID`",
-        "stack(4, 'A2→B', `A2→B`, 'B→C', `B→C`, 'C→D', `C→D`, 'D→E', `D→E`) as (transition, cycle_days)"
-    )
+# 1) A2 → B
+df_a2_b = (
+    base_df
+    .filter(F.col("seq_a2_b_status") == "OK")
+    .select("Project ID", F.col("ct_a2_to_b_days").alias("cycle_days"))
     .filter(F.col("cycle_days").isNotNull())
 )
 
-# 3) Compute P20 / P50 / P80 per transition
+# 2) B → C
+df_b_c = (
+    base_df
+    .filter(F.col("seq_b_c_status") == "OK")
+    .select("Project ID", F.col("ct_b_to_c_days").alias("cycle_days"))
+    .filter(F.col("cycle_days").isNotNull())
+)
+
+# 3) C → D
+df_c_d = (
+    base_df
+    .filter(F.col("seq_c_d_status") == "OK")
+    .select("Project ID", F.col("ct_c_to_d_days").alias("cycle_days"))
+    .filter(F.col("cycle_days").isNotNull())
+)
+
+# 4) D → E
+df_d_e = (
+    base_df
+    .filter(F.col("seq_d_e_status") == "OK")
+    .select("Project ID", F.col("ct_d_to_e_days").alias("cycle_days"))
+    .filter(F.col("cycle_days").isNotNull())
+)
+
+# Benchmarks (P20/P50/P80 + Mean) per transition
+bench_a2_b = bench_stats(df_a2_b, "A2→B")
+bench_b_c  = bench_stats(df_b_c,  "B→C")
+bench_c_d  = bench_stats(df_c_d,  "C→D")
+bench_d_e  = bench_stats(df_d_e,  "D→E")
+
 benchmarks = (
-    df_long
-    .groupBy("transition")
-    .agg(
-        F.count("*").alias("n_datapoints"),
-        F.expr("percentile_approx(cycle_days, 0.2)").alias("P20_days"),
-        F.expr("percentile_approx(cycle_days, 0.5)").alias("P50_days"),
-        F.expr("percentile_approx(cycle_days, 0.8)").alias("P80_days"),
-        F.round(F.avg("cycle_days"), 1).alias("Mean_days")  # optional
-    )
+    bench_a2_b
+    .unionByName(bench_b_c)
+    .unionByName(bench_c_d)
+    .unionByName(bench_d_e)
+    .select("transition", "n_datapoints", "P20_days", "P50_days", "P80_days", "Mean_days")
     .orderBy("transition")
 )
 
 display(benchmarks)
+
 
 
 
