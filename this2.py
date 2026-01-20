@@ -304,3 +304,168 @@ display(benchmarks)
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from pyspark.sql import functions as F
+
+base_df = df_OPPM.filter(F.col("benchmark_eligible") == 1)
+
+def bench_stats(df, transition_name):
+    return (df.agg(
+                F.count("*").alias("n_datapoints"),
+                F.expr("percentile_approx(cycle_days, 0.2)").alias("P20_days"),
+                F.expr("percentile_approx(cycle_days, 0.5)").alias("P50_days"),
+                F.expr("percentile_approx(cycle_days, 0.8)").alias("P80_days"),
+                F.round(F.avg("cycle_days"), 1).alias("Mean_days")
+            )
+            .withColumn("transition", F.lit(transition_name))
+           )
+
+df_a2_b = base_df.filter(F.col("seq_a2_b_status")=="OK").select(F.col("ct_a2_to_b_days").alias("cycle_days")).filter(F.col("cycle_days").isNotNull())
+df_b_c  = base_df.filter(F.col("seq_b_c_status")=="OK").select(F.col("ct_b_to_c_days").alias("cycle_days")).filter(F.col("cycle_days").isNotNull())
+df_c_d  = base_df.filter(F.col("seq_c_d_status")=="OK").select(F.col("ct_c_to_d_days").alias("cycle_days")).filter(F.col("cycle_days").isNotNull())
+df_d_e  = base_df.filter(F.col("seq_d_e_status")=="OK").select(F.col("ct_d_to_e_days").alias("cycle_days")).filter(F.col("cycle_days").isNotNull())
+
+benchmarks = (
+    bench_stats(df_a2_b, "A2→B")
+    .unionByName(bench_stats(df_b_c, "B→C"))
+    .unionByName(bench_stats(df_c_d, "C→D"))
+    .unionByName(bench_stats(df_d_e, "D→E"))
+    .select("transition","n_datapoints","P20_days","P50_days","P80_days","Mean_days")
+    .orderBy("transition")
+)
+
+display(benchmarks)
+
+
+
+
+
+
+from pyspark.sql import functions as F
+
+base_df = df_OPPM.filter(F.col("benchmark_eligible") == 1)
+
+# Pick bucket edges (days). Adjust as needed.
+# This makes your distribution interpretable and avoids huge tails dominating.
+bins = [0, 7, 30, 90, 180, 365, 730, 1460, 3650]  # up to 10 years
+labels = [
+    "0-7", "8-30", "31-90", "91-180", "181-365",
+    "366-730", "731-1460", "1461-3650", "3650+"
+]
+
+def bucketize(col):
+    return (
+        F.when(col.isNull(), None)
+         .when(col <= bins[1], labels[0])
+         .when((col > bins[1]) & (col <= bins[2]), labels[1])
+         .when((col > bins[2]) & (col <= bins[3]), labels[2])
+         .when((col > bins[3]) & (col <= bins[4]), labels[3])
+         .when((col > bins[4]) & (col <= bins[5]), labels[4])
+         .when((col > bins[5]) & (col <= bins[6]), labels[5])
+         .when((col > bins[6]) & (col <= bins[7]), labels[6])
+         .when((col > bins[7]) & (col <= bins[8]), labels[7])
+         .otherwise(labels[8])
+    )
+
+df_dist = (
+    base_df.select(
+        F.when(F.col("seq_a2_b_status")=="OK", F.col("ct_a2_to_b_days")).alias("A2→B"),
+        F.when(F.col("seq_b_c_status")=="OK",  F.col("ct_b_to_c_days")).alias("B→C"),
+        F.when(F.col("seq_c_d_status")=="OK",  F.col("ct_c_to_d_days")).alias("C→D"),
+        F.when(F.col("seq_d_e_status")=="OK",  F.col("ct_d_to_e_days")).alias("D→E")
+    )
+    .selectExpr("stack(4, 'A2→B', `A2→B`, 'B→C', `B→C`, 'C→D', `C→D`, 'D→E', `D→E`) as (transition, cycle_days)")
+    .filter(F.col("cycle_days").isNotNull())
+    .withColumn("bucket", bucketize(F.col("cycle_days")))
+    .groupBy("transition","bucket")
+    .count()
+    .orderBy("transition","bucket")
+)
+
+display(df_dist)
+
+
+
+
+
+
+
+
+from pyspark.sql import functions as F
+
+dq_seq = df_OPPM.select(
+    F.sum(F.when(F.col("seq_a2_b_status")=="OUT_OF_ORDER", 1).otherwise(0)).alias("A2→B_breaks"),
+    F.sum(F.when(F.col("seq_b_c_status")=="OUT_OF_ORDER", 1).otherwise(0)).alias("B→C_breaks"),
+    F.sum(F.when(F.col("seq_c_d_status")=="OUT_OF_ORDER", 1).otherwise(0)).alias("C→D_breaks"),
+    F.sum(F.when(F.col("seq_d_e_status")=="OUT_OF_ORDER", 1).otherwise(0)).alias("D→E_breaks")
+)
+
+# Convert wide -> long for easy bar charting
+dq_seq_long = dq_seq.selectExpr(
+    "stack(4, 'A2→B', A2→B_breaks, 'B→C', B→C_breaks, 'C→D', C→D_breaks, 'D→E', D→E_breaks) as (transition, out_of_order_count)"
+)
+
+display(dq_seq_long)
+
+
+
+
+
+
+
+
+
+from pyspark.sql import functions as F
+
+same_day_dist = (
+    df_OPPM.groupBy("consecutive_zero_cnt")
+           .count()
+           .orderBy("consecutive_zero_cnt")
+)
+
+display(same_day_dist)
+
+
+
+
+
+total = df_OPPM.count()
+
+same_day_kpis = df_OPPM.agg(
+    F.count("*").alias("total_rows"),
+    F.sum(F.when(F.col("all_gates_same_date")==1, 1).otherwise(0)).alias("all_gates_same_date_cnt"),
+    F.sum(F.when(F.col("consecutive_zero_cnt")>=2, 1).otherwise(0)).alias("two_or_more_zero_transitions_cnt"),
+    F.sum(F.when(F.col("benchmark_eligible")==0, 1).otherwise(0)).alias("benchmark_excluded_cnt")
+).withColumn(
+    "all_gates_same_date_pct",
+    F.round(F.col("all_gates_same_date_cnt") / F.col("total_rows") * 100, 2)
+).withColumn(
+    "two_or_more_zero_transitions_pct",
+    F.round(F.col("two_or_more_zero_transitions_cnt") / F.col("total_rows") * 100, 2)
+).withColumn(
+    "benchmark_excluded_pct",
+    F.round(F.col("benchmark_excluded_cnt") / F.col("total_rows") * 100, 2)
+)
+
+display(same_day_kpis)
+
+
+
