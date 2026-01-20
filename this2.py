@@ -133,3 +133,53 @@ display(
     ).limit(50)
 )
 
+
+
+
+from pyspark.sql import functions as F
+
+# Gate date cols (already standardised to date)
+gA2 = F.col("Gate A2 Decision Date")
+gB  = F.col("Gate B Decision Date")
+gC  = F.col("Gate C Decision Date")
+gD  = F.col("Gate D Decision Date")
+gE  = F.col("Gate E Decision Date")
+
+# 1) Per-transition "zero-day" flags (same date across consecutive gates)
+df_OPPM = (
+    df_OPPM
+    .withColumn("zero_a2_b", F.when(gA2.isNotNull() & gB.isNotNull() & (gA2 == gB), F.lit(1)).otherwise(F.lit(0)))
+    .withColumn("zero_b_c",  F.when(gB.isNotNull()  & gC.isNotNull() & (gB  == gC), F.lit(1)).otherwise(F.lit(0)))
+    .withColumn("zero_c_d",  F.when(gC.isNotNull()  & gD.isNotNull() & (gC  == gD), F.lit(1)).otherwise(F.lit(0)))
+    .withColumn("zero_d_e",  F.when(gD.isNotNull()  & gE.isNotNull() & (gD  == gE), F.lit(1)).otherwise(F.lit(0)))
+    .withColumn("consecutive_zero_cnt", F.col("zero_a2_b") + F.col("zero_b_c") + F.col("zero_c_d") + F.col("zero_d_e"))
+)
+
+# 2) Flag where ALL gates have the exact same date
+df_OPPM = df_OPPM.withColumn(
+    "all_gates_same_date",
+    F.when(
+        gA2.isNotNull() & gB.isNotNull() & gC.isNotNull() & gD.isNotNull() & gE.isNotNull() &
+        (gA2 == gB) & (gB == gC) & (gC == gD) & (gD == gE),
+        F.lit(1)
+    ).otherwise(F.lit(0))
+)
+
+# 3) Benchmark eligibility (recommended default)
+# Exclude: all gates same date OR 2+ consecutive zero transitions
+df_OPPM = df_OPPM.withColumn(
+    "benchmark_eligible",
+    F.when((F.col("all_gates_same_date") == 1) | (F.col("consecutive_zero_cnt") >= 2), F.lit(0)).otherwise(F.lit(1))
+)
+
+# Optional quick view
+display(df_OPPM.select(
+    "Project ID",
+    "all_gates_same_date",
+    "consecutive_zero_cnt",
+    "benchmark_eligible",
+    "zero_a2_b", "zero_b_c", "zero_c_d", "zero_d_e",
+    "Gate A2 Decision Date", "Gate B Decision Date", "Gate C Decision Date", "Gate D Decision Date", "Gate E Decision Date"
+).limit(50))
+
+
