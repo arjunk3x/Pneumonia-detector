@@ -183,3 +183,45 @@ display(df_OPPM.select(
 ).limit(50))
 
 
+
+
+
+
+
+
+
+base_df = df_OPPM.filter(F.col("benchmark_eligible") == 1)
+
+
+df_a2_b = base_df.filter(F.col("seq_a2_b_status") == "OK") \
+    .select("Project ID", "Project Type", "Delivery Unit", "region", F.col("ct_a2_to_b_days").alias("cycle_days"))
+
+df_b_c = base_df.filter(F.col("seq_b_c_status") == "OK") \
+    .select("Project ID", "Project Type", "Delivery Unit", "region", F.col("ct_b_to_c_days").alias("cycle_days"))
+
+df_c_d = base_df.filter(F.col("seq_c_d_status") == "OK") \
+    .select("Project ID", "Project Type", "Delivery Unit", "region", F.col("ct_c_to_d_days").alias("cycle_days"))
+
+df_d_e = base_df.filter(F.col("seq_d_e_status") == "OK") \
+    .select("Project ID", "Project Type", "Delivery Unit", "region", F.col("ct_d_to_e_days").alias("cycle_days"))
+
+
+from pyspark.sql import functions as F
+
+mean_a2_b = df_a2_b.agg(F.mean("cycle_days").alias("mean_days")).withColumn("transition", F.lit("A2→B"))
+mean_b_c  = df_b_c.agg(F.mean("cycle_days").alias("mean_days")).withColumn("transition", F.lit("B→C"))
+mean_c_d  = df_c_d.agg(F.mean("cycle_days").alias("mean_days")).withColumn("transition", F.lit("C→D"))
+mean_d_e  = df_d_e.agg(F.mean("cycle_days").alias("mean_days")).withColumn("transition", F.lit("D→E"))
+
+bench_means = mean_a2_b.unionByName(mean_b_c).unionByName(mean_c_d).unionByName(mean_d_e)
+display(bench_means)
+
+
+bench_means_by_unit = (
+    df_b_c.groupBy("Delivery Unit")  # change to region/project type/etc.
+          .agg(F.mean("cycle_days").alias("mean_days"),
+               F.count("*").alias("n"))
+          .orderBy(F.desc("n"))
+)
+display(bench_means_by_unit)
+
