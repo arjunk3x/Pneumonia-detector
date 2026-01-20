@@ -600,3 +600,114 @@ display(kpis)
 
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from pyspark.sql import functions as F
+import matplotlib.pyplot as plt
+import numpy as np
+
+# -----------------------------
+# Transition time distribution per gate-pair (P20/P50/P80)
+# -----------------------------
+
+# Base filter for benchmark-quality rows
+base_df = df_OPPM.filter(F.col("benchmark_eligible") == 1)
+
+transitions = [
+    ("A2→B", "seq_a2_b_status", "ct_a2_to_b_days"),
+    ("B→C",  "seq_b_c_status",  "ct_b_to_c_days"),
+    ("C→D",  "seq_c_d_status",  "ct_c_to_d_days"),
+    ("D→E",  "seq_d_e_status",  "ct_d_to_e_days"),
+]
+
+def transition_quantiles(t_name, status_col, ct_col):
+    tmp = (base_df
+           .filter(F.col(status_col) == "OK")
+           .select(F.col(ct_col).cast("double").alias("cycle_days"))
+           .filter(F.col("cycle_days").isNotNull())
+          )
+
+    q = (tmp.agg(
+            F.count("*").alias("n"),
+            F.expr("percentile_approx(cycle_days, array(0.2, 0.5, 0.8), 10000)").alias("q")
+        )
+        .select(
+            F.lit(t_name).alias("transition"),
+            F.col("n"),
+            F.col("q")[0].alias("p20"),
+            F.col("q")[1].alias("p50"),
+            F.col("q")[2].alias("p80"),
+        )
+    )
+    return q
+
+# Build quantile table
+qdfs = [transition_quantiles(*t) for t in transitions]
+qdf = qdfs[0]
+for x in qdfs[1:]:
+    qdf = qdf.unionByName(x)
+
+qpdf = qdf.orderBy("transition").toPandas()
+
+# Build "box" stats where the box = P20..P80 and median = P50
+bxp_stats = []
+for _, r in qpdf.iterrows():
+    if r["n"] and r["p20"] is not None and r["p50"] is not None and r["p80"] is not None:
+        bxp_stats.append({
+            "label": f'{r["transition"]} (n={int(r["n"])})',
+            "whislo": float(r["p20"]),  # whisker low (same as P20 here)
+            "q1":     float(r["p20"]),  # box lower bound = P20
+            "med":    float(r["p50"]),  # median = P50
+            "q3":     float(r["p80"]),  # box upper bound = P80
+            "whishi": float(r["p80"]),  # whisker high (same as P80 here)
+            "fliers": []
+        })
+
+plt.figure(figsize=(10, 4))
+plt.bxp(bxp_stats, vert=False, showfliers=False)
+
+plt.xlabel("Days")
+plt.title("Transition Time Distribution per Gate-Pair (Box = P20–P80, line = P50)")
+
+# Add explicit markers for P20 and P80 (ticks) + label P50 dot
+for i, r in enumerate(qpdf.sort_values("transition").itertuples(index=False), start=1):
+    # y positions for bxp are 1..N
+    y = i
+    if r.p20 is not None and r.p80 is not None and r.p50 is not None:
+        plt.plot([r.p20], [y], marker="|", markersize=14)  # P20 tick
+        plt.plot([r.p80], [y], marker="|", markersize=14)  # P80 tick
+        plt.plot([r.p50], [y], marker="o", markersize=4)   # P50 dot
+
+plt.tight_layout()
+plt.show()
+
+# Optional: show the underlying P20/P50/P80 table
+display(qdf)
+
