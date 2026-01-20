@@ -1,5 +1,3 @@
-# Databricks notebook cell (installs a robust date parser)
-%pip install python-dateutil
 from pyspark.sql import functions as F
 from pyspark.sql import types as T
 
@@ -32,8 +30,6 @@ def parse_date_spark(colname: str):
     c = F.trim(F.col(colname).cast("string"))
     c = F.when((c == "") | c.isNull(), F.lit(None)).otherwise(c)
 
-    # Try multiple formats; first successful parse wins.
-    # Add/remove formats here as you discover them in your data.
     parsed = F.coalesce(
         F.to_date(c, "yyyy-MM-dd"),
         F.to_date(c, "yyyy/MM/dd"),
@@ -42,16 +38,15 @@ def parse_date_spark(colname: str):
         F.to_date(c, "dd-MM-yyyy"),
         F.to_date(c, "MM-dd-yyyy"),
         F.to_date(c, "dd-MMM-yyyy"),   # e.g., 05-Jan-2024
-        F.to_date(c, "dd-MMM-yy"),
+        F.to_date(c, "dd-MMM-yy"),     # e.g., 01-Jan-90 (Spark may interpret as 2090)
         F.to_date(c, "MMM dd, yyyy"),  # e.g., Jan 05, 2024
-        # Fallback: try parsing as timestamp, then convert to date
         F.to_date(F.to_timestamp(c))
     )
     return parsed
 
 # 2b) Fallback parser using python-dateutil (handles messy / inconsistent formats)
 from dateutil import parser
-import datetime
+import re
 
 @F.udf(returnType=T.DateType())
 def parse_date_dateutil(s: str):
@@ -61,9 +56,13 @@ def parse_date_dateutil(s: str):
     if s == "":
         return None
     try:
-        # fuzzy=True ignores extra text; dayfirst=False is typical UK/OPPM ambiguity
-        # If you know your data is mostly UK-style (dd/mm), change to dayfirst=True.
         dt = parser.parse(s, fuzzy=True, dayfirst=True)
+
+        # ---- FIX (Gate D issue): map "90" -> 1990 (not 2090) ----
+        # Applies only when raw string ends with -90 or /90 and parse produced year 2090
+        if re.search(r"$", s) and dt.year == 2090:
+            dt = dt.replace(year=1990)
+
         return dt.date()
     except Exception:
         return None
@@ -71,9 +70,18 @@ def parse_date_dateutil(s: str):
 # Apply standardisation:
 # - First parse with Spark
 # - If Spark returns NULL but raw value is present, try dateutil UDF
+# - Special fix ONLY for Gate D: if "90" got parsed as 2090, shift to 1990
 for gc in gate_cols:
     raw = F.trim(F.col(gc).cast("string"))
     spark_parsed = parse_date_spark(gc)
+
+    # ---- FIX (Spark side) for Gate D only ----
+    if gc == "Gate D Decision Date":
+        # If raw ends with -90 or /90 AND Spark parsed year is 2090 -> subtract 100 years
+        spark_parsed = F.when(
+            (raw.rlike(r".*$")) & (F.year(spark_parsed) == 2090),
+            F.add_months(spark_parsed, -1200)  # 100 years = 1200 months
+        ).otherwise(spark_parsed)
 
     df_OPPM = df_OPPM.withColumn(
         gc,
@@ -86,10 +94,6 @@ for gc in gate_cols:
 display(df_OPPM.select("Project ID", *gate_cols).limit(25))
 
 # ---- 3) Categorise projects: Completed / In Progress / Not Started ----
-# Completed: all gate decision dates present
-# Not Started: none present
-# In Progress: anything in between
-
 non_null_count = sum(
     F.when(F.col(c).isNotNull(), F.lit(1)).otherwise(F.lit(0))
     for c in gate_cols
@@ -123,3 +127,6 @@ display(
         *gate_cols
     ).limit(50)
 )
+
+
+
