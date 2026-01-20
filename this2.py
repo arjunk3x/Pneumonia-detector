@@ -130,3 +130,48 @@ display(
 
 
 
+
+
+
+
+
+
+
+
+from functools import reduce
+from pyspark.sql import functions as F
+
+# Gate columns in order
+gate_cols_ordered = [
+    "Gate A2 Decision Date",
+    "Gate B Decision Date",
+    "Gate C Decision Date",
+    "Gate D Decision Date",
+    "Gate E Decision Date"
+]
+
+# Build pairwise checks: (B>=A2) AND (C>=B) AND (D>=C) AND (E>=D)
+# Rule for NULLs: ignore comparisons where either side is NULL (doesn't break sequence)
+pairwise_ok_exprs = [
+    (F.col(gate_cols_ordered[i+1]).isNull() | F.col(gate_cols_ordered[i]).isNull() |
+     (F.col(gate_cols_ordered[i+1]) >= F.col(gate_cols_ordered[i])))
+    for i in range(len(gate_cols_ordered) - 1)
+]
+
+is_sequence_expr = reduce(lambda a, b: a & b, pairwise_ok_exprs)
+
+df_OPPM = df_OPPM.withColumn("is_sequence", is_sequence_expr.cast("boolean"))
+
+# Optional: view failures
+display(
+    df_OPPM.select("Project ID", "is_sequence", *gate_cols_ordered)
+           .orderBy(F.asc("is_sequence"))
+           .limit(50)
+)
+
+
+
+
+
+
+
