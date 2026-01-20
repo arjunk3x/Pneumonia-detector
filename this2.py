@@ -324,33 +324,61 @@ display(benchmarks)
 
 
 from pyspark.sql import functions as F
+import matplotlib.pyplot as plt
 
 base_df = df_OPPM.filter(F.col("benchmark_eligible") == 1)
 
-def bench_stats(df, transition_name):
-    return (df.agg(
-                F.count("*").alias("n_datapoints"),
-                F.expr("percentile_approx(cycle_days, 0.2)").alias("P20_days"),
-                F.expr("percentile_approx(cycle_days, 0.5)").alias("P50_days"),
-                F.expr("percentile_approx(cycle_days, 0.8)").alias("P80_days"),
-                F.round(F.avg("cycle_days"), 1).alias("Mean_days")
-            )
-            .withColumn("transition", F.lit(transition_name))
-           )
+transitions = [
+    ("A2→B", "seq_a2_b_status", "ct_a2_to_b_days"),
+    ("B→C",  "seq_b_c_status",  "ct_b_to_c_days"),
+    ("C→D",  "seq_c_d_status",  "ct_c_to_d_days"),
+    ("D→E",  "seq_d_e_status",  "ct_d_to_e_days"),
+]
 
-df_a2_b = base_df.filter(F.col("seq_a2_b_status")=="OK").select(F.col("ct_a2_to_b_days").alias("cycle_days")).filter(F.col("cycle_days").isNotNull())
-df_b_c  = base_df.filter(F.col("seq_b_c_status")=="OK").select(F.col("ct_b_to_c_days").alias("cycle_days")).filter(F.col("cycle_days").isNotNull())
-df_c_d  = base_df.filter(F.col("seq_c_d_status")=="OK").select(F.col("ct_c_to_d_days").alias("cycle_days")).filter(F.col("cycle_days").isNotNull())
-df_d_e  = base_df.filter(F.col("seq_d_e_status")=="OK").select(F.col("ct_d_to_e_days").alias("cycle_days")).filter(F.col("cycle_days").isNotNull())
+bench_rows = []
+for name, status_col, ct_col in transitions:
+    stats = (base_df
+        .filter(F.col(status_col) == "OK")
+        .select(F.col(ct_col).alias("cycle_days"))
+        .filter(F.col("cycle_days").isNotNull())
+        .agg(
+            F.count("*").alias("n_datapoints"),
+            F.expr("percentile_approx(cycle_days, 0.2)").alias("P20_days"),
+            F.expr("percentile_approx(cycle_days, 0.5)").alias("P50_days"),
+            F.expr("percentile_approx(cycle_days, 0.8)").alias("P80_days"),
+            F.round(F.avg("cycle_days"), 1).alias("Mean_days"),
+        )
+        .withColumn("transition", F.lit(name))
+    )
+    bench_rows.append(stats)
 
-benchmarks = (
-    bench_stats(df_a2_b, "A2→B")
-    .unionByName(bench_stats(df_b_c, "B→C"))
-    .unionByName(bench_stats(df_c_d, "C→D"))
-    .unionByName(bench_stats(df_d_e, "D→E"))
-    .select("transition","n_datapoints","P20_days","P50_days","P80_days","Mean_days")
-    .orderBy("transition")
-)
+benchmarks = bench_rows[0]
+for b in bench_rows[1:]:
+    benchmarks = benchmarks.unionByName(b)
+
+benchmarks_pd = benchmarks.select("transition","n_datapoints","P20_days","P50_days","P80_days","Mean_days") \
+                          .orderBy("transition") \
+                          .toPandas()
+
+# Plot: P20–P80 range with P50 dot
+plt.figure(figsize=(9, 3.5))
+y = list(range(len(benchmarks_pd)))
+
+x = benchmarks_pd["P50_days"].values
+left_err  = (benchmarks_pd["P50_days"] - benchmarks_pd["P20_days"]).values
+right_err = (benchmarks_pd["P80_days"] - benchmarks_pd["P50_days"]).values
+
+plt.errorbar(x=x, y=y, xerr=[left_err, right_err], fmt='o')
+plt.yticks(y, benchmarks_pd["transition"])
+plt.xlabel("Days")
+plt.title("Gate-to-Gate Benchmarks (P20–P80 range, dot = P50)")
+
+# add n labels
+for i, n in enumerate(benchmarks_pd["n_datapoints"].values):
+    plt.text(benchmarks_pd["P80_days"].values[i], i, f"  n={n}", va="center")
+
+plt.tight_layout()
+plt.show()
 
 display(benchmarks)
 
@@ -359,113 +387,216 @@ display(benchmarks)
 
 
 
+
+
+
+
 from pyspark.sql import functions as F
+import matplotlib.pyplot as plt
 
 base_df = df_OPPM.filter(F.col("benchmark_eligible") == 1)
 
-# Pick bucket edges (days). Adjust as needed.
-# This makes your distribution interpretable and avoids huge tails dominating.
-bins = [0, 7, 30, 90, 180, 365, 730, 1460, 3650]  # up to 10 years
-labels = [
-    "0-7", "8-30", "31-90", "91-180", "181-365",
-    "366-730", "731-1460", "1461-3650", "3650+"
+same_day_rows = []
+for name, status_col, ct_col in transitions:
+    tmp = (base_df
+        .filter(F.col(status_col) == "OK")
+        .select(F.col(ct_col).alias("cycle_days"))
+        .filter(F.col("cycle_days").isNotNull())
+        .withColumn("is_same_day", F.when(F.col("cycle_days") == 0, F.lit(1)).otherwise(F.lit(0)))
+        .agg(
+            F.count("*").alias("n_datapoints"),
+            (F.avg("is_same_day") * 100).alias("pct_same_day")
+        )
+        .withColumn("transition", F.lit(name))
+    )
+    same_day_rows.append(tmp)
+
+same_day_df = same_day_rows[0]
+for s in same_day_rows[1:]:
+    same_day_df = same_day_df.unionByName(s)
+
+same_day_pd = same_day_df.select("transition","n_datapoints","pct_same_day") \
+                         .orderBy("transition") \
+                         .toPandas()
+
+plt.figure(figsize=(9, 3.2))
+plt.barh(same_day_pd["transition"], same_day_pd["pct_same_day"])
+plt.xlabel("% of datapoints that are same-day (0 days)")
+plt.title("Same-day Transitions (0-day cycle time)")
+
+plt.tight_layout()
+plt.show()
+
+display(same_day_df)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from pyspark.sql import functions as F
+import matplotlib.pyplot as plt
+
+base_df = df_OPPM.filter(F.col("benchmark_eligible") == 1)
+
+dist_rows = []
+for name, status_col, ct_col in transitions:
+    dist = (base_df
+        .filter(F.col(status_col) == "OK")
+        .select(F.col(ct_col).alias("cycle_days"))
+        .filter(F.col("cycle_days").isNotNull() & (F.col("cycle_days") > 0))
+        .agg(
+            F.count("*").alias("n_nonzero"),
+            F.expr("percentile_approx(cycle_days, 0.05)").alias("p05"),
+            F.expr("percentile_approx(cycle_days, 0.25)").alias("p25"),
+            F.expr("percentile_approx(cycle_days, 0.50)").alias("p50"),
+            F.expr("percentile_approx(cycle_days, 0.75)").alias("p75"),
+            F.expr("percentile_approx(cycle_days, 0.95)").alias("p95"),
+        )
+        .withColumn("transition", F.lit(name))
+    )
+    dist_rows.append(dist)
+
+dist_df = dist_rows[0]
+for d in dist_rows[1:]:
+    dist_df = dist_df.unionByName(d)
+
+dist_pd = dist_df.select("transition","n_nonzero","p05","p25","p50","p75","p95") \
+                 .orderBy("transition") \
+                 .toPandas()
+
+# Build bxp stats for matplotlib (no raw points required)
+bxp_stats = []
+for _, r in dist_pd.iterrows():
+    bxp_stats.append({
+        "label": r["transition"],
+        "whislo": r["p05"],
+        "q1": r["p25"],
+        "med": r["p50"],
+        "q3": r["p75"],
+        "whishi": r["p95"],
+        "fliers": []
+    })
+
+plt.figure(figsize=(9, 3.6))
+plt.bxp(bxp_stats, vert=False, showfliers=False)
+plt.xlabel("Days (non-zero only)")
+plt.title("Non-zero Cycle Time Spread (P05–P95 whiskers, box=P25–P75, line=P50)")
+plt.tight_layout()
+plt.show()
+
+display(dist_df)
+
+
+
+
+
+
+
+
+
+
+
+
+from pyspark.sql import functions as F
+import matplotlib.pyplot as plt
+import pandas as pd
+
+status_rows = []
+status_map = [
+    ("A2→B", "seq_a2_b_status"),
+    ("B→C",  "seq_b_c_status"),
+    ("C→D",  "seq_c_d_status"),
+    ("D→E",  "seq_d_e_status"),
 ]
 
-def bucketize(col):
-    return (
-        F.when(col.isNull(), None)
-         .when(col <= bins[1], labels[0])
-         .when((col > bins[1]) & (col <= bins[2]), labels[1])
-         .when((col > bins[2]) & (col <= bins[3]), labels[2])
-         .when((col > bins[3]) & (col <= bins[4]), labels[3])
-         .when((col > bins[4]) & (col <= bins[5]), labels[4])
-         .when((col > bins[5]) & (col <= bins[6]), labels[5])
-         .when((col > bins[6]) & (col <= bins[7]), labels[6])
-         .when((col > bins[7]) & (col <= bins[8]), labels[7])
-         .otherwise(labels[8])
+for tname, scol in status_map:
+    tmp = (df_OPPM
+        .groupBy(F.col(scol).alias("status"))
+        .count()
+        .withColumn("transition", F.lit(tname))
     )
+    status_rows.append(tmp)
 
-df_dist = (
-    base_df.select(
-        F.when(F.col("seq_a2_b_status")=="OK", F.col("ct_a2_to_b_days")).alias("A2→B"),
-        F.when(F.col("seq_b_c_status")=="OK",  F.col("ct_b_to_c_days")).alias("B→C"),
-        F.when(F.col("seq_c_d_status")=="OK",  F.col("ct_c_to_d_days")).alias("C→D"),
-        F.when(F.col("seq_d_e_status")=="OK",  F.col("ct_d_to_e_days")).alias("D→E")
-    )
-    .selectExpr("stack(4, 'A2→B', `A2→B`, 'B→C', `B→C`, 'C→D', `C→D`, 'D→E', `D→E`) as (transition, cycle_days)")
-    .filter(F.col("cycle_days").isNotNull())
-    .withColumn("bucket", bucketize(F.col("cycle_days")))
-    .groupBy("transition","bucket")
+status_df = status_rows[0]
+for s in status_rows[1:]:
+    status_df = status_df.unionByName(s)
+
+status_pd = status_df.toPandas()
+pivot = status_pd.pivot(index="transition", columns="status", values="count").fillna(0)
+
+# Keep consistent order if columns exist
+for col in ["OK", "MISSING", "OUT_OF_ORDER"]:
+    if col not in pivot.columns:
+        pivot[col] = 0
+pivot = pivot[["OK", "MISSING", "OUT_OF_ORDER"]]
+
+ax = pivot.plot(kind="bar", stacked=True, figsize=(9, 3.8))
+ax.set_xlabel("Transition")
+ax.set_ylabel("Count")
+ax.set_title("Sequence Data Quality by Transition (OK vs Missing vs Out-of-order)")
+plt.tight_layout()
+plt.show()
+
+display(status_df.orderBy("transition","status"))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from pyspark.sql import functions as F
+import matplotlib.pyplot as plt
+
+dist_zero = (df_OPPM
+    .groupBy("consecutive_zero_cnt")
     .count()
-    .orderBy("transition","bucket")
+    .orderBy("consecutive_zero_cnt")
 )
 
-display(df_dist)
+dist_zero_pd = dist_zero.toPandas()
 
+plt.figure(figsize=(8.5, 3.2))
+plt.bar(dist_zero_pd["consecutive_zero_cnt"].astype(str), dist_zero_pd["count"])
+plt.xlabel("consecutive_zero_cnt (0..4)")
+plt.ylabel("Number of projects")
+plt.title("Distribution of Same-day Consecutive Transitions")
+plt.tight_layout()
+plt.show()
 
-
-
+display(dist_zero)
 
 
 
 
 from pyspark.sql import functions as F
 
-dq_seq = df_OPPM.select(
-    F.sum(F.when(F.col("seq_a2_b_status")=="OUT_OF_ORDER", 1).otherwise(0)).alias("A2→B_breaks"),
-    F.sum(F.when(F.col("seq_b_c_status")=="OUT_OF_ORDER", 1).otherwise(0)).alias("B→C_breaks"),
-    F.sum(F.when(F.col("seq_c_d_status")=="OUT_OF_ORDER", 1).otherwise(0)).alias("C→D_breaks"),
-    F.sum(F.when(F.col("seq_d_e_status")=="OUT_OF_ORDER", 1).otherwise(0)).alias("D→E_breaks")
-)
+kpis = (df_OPPM.agg(
+    F.round(F.avg(F.when(F.col("all_gates_same_date")==1, 1).otherwise(0))*100, 2).alias("pct_all_gates_same_date"),
+    F.round(F.avg(F.when(F.col("consecutive_zero_cnt")>=2, 1).otherwise(0))*100, 2).alias("pct_2plus_consecutive_zero"),
+    F.round(F.avg(F.when(F.col("benchmark_eligible")==1, 1).otherwise(0))*100, 2).alias("pct_benchmark_eligible"),
+    F.count("*").alias("n_projects")
+))
 
-# Convert wide -> long for easy bar charting
-dq_seq_long = dq_seq.selectExpr(
-    "stack(4, 'A2→B', A2→B_breaks, 'B→C', B→C_breaks, 'C→D', C→D_breaks, 'D→E', D→E_breaks) as (transition, out_of_order_count)"
-)
+display(kpis)
 
-display(dq_seq_long)
-
-
-
-
-
-
-
-
-
-from pyspark.sql import functions as F
-
-same_day_dist = (
-    df_OPPM.groupBy("consecutive_zero_cnt")
-           .count()
-           .orderBy("consecutive_zero_cnt")
-)
-
-display(same_day_dist)
-
-
-
-
-
-total = df_OPPM.count()
-
-same_day_kpis = df_OPPM.agg(
-    F.count("*").alias("total_rows"),
-    F.sum(F.when(F.col("all_gates_same_date")==1, 1).otherwise(0)).alias("all_gates_same_date_cnt"),
-    F.sum(F.when(F.col("consecutive_zero_cnt")>=2, 1).otherwise(0)).alias("two_or_more_zero_transitions_cnt"),
-    F.sum(F.when(F.col("benchmark_eligible")==0, 1).otherwise(0)).alias("benchmark_excluded_cnt")
-).withColumn(
-    "all_gates_same_date_pct",
-    F.round(F.col("all_gates_same_date_cnt") / F.col("total_rows") * 100, 2)
-).withColumn(
-    "two_or_more_zero_transitions_pct",
-    F.round(F.col("two_or_more_zero_transitions_cnt") / F.col("total_rows") * 100, 2)
-).withColumn(
-    "benchmark_excluded_pct",
-    F.round(F.col("benchmark_excluded_cnt") / F.col("total_rows") * 100, 2)
-)
-
-display(same_day_kpis)
 
 
 
