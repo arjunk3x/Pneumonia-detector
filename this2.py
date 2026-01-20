@@ -138,36 +138,40 @@ display(
 
 
 
-from functools import reduce
 from pyspark.sql import functions as F
 
-# Gate columns in order
-gate_cols_ordered = [
-    "Gate A2 Decision Date",
-    "Gate B Decision Date",
-    "Gate C Decision Date",
-    "Gate D Decision Date",
-    "Gate E Decision Date"
-]
+# Gate columns (already standardised to date)
+a2 = F.col("Gate A2 Decision Date")
+b  = F.col("Gate B Decision Date")
+c  = F.col("Gate C Decision Date")
+d  = F.col("Gate D Decision Date")
+e  = F.col("Gate E Decision Date")
 
-# Build pairwise checks: (B>=A2) AND (C>=B) AND (D>=C) AND (E>=D)
-# Rule for NULLs: ignore comparisons where either side is NULL (doesn't break sequence)
-pairwise_ok_exprs = [
-    (F.col(gate_cols_ordered[i+1]).isNull() | F.col(gate_cols_ordered[i]).isNull() |
-     (F.col(gate_cols_ordered[i+1]) >= F.col(gate_cols_ordered[i])))
-    for i in range(len(gate_cols_ordered) - 1)
-]
-
-is_sequence_expr = reduce(lambda a, b: a & b, pairwise_ok_exprs)
-
-df_OPPM = df_OPPM.withColumn("is_sequence", is_sequence_expr.cast("boolean"))
-
-# Optional: view failures
-display(
-    df_OPPM.select("Project ID", "is_sequence", *gate_cols_ordered)
-           .orderBy(F.asc("is_sequence"))
-           .limit(50)
+# Rule:
+# - If a later gate exists, all previous gates must exist (no skipping)
+# - And dates must be non-decreasing: A2 <= B <= C <= D <= E (only when both exist)
+df_OPPM = df_OPPM.withColumn(
+    "is_sequence",
+    F.when(
+        # ---- no skipping gates ----
+        (e.isNotNull() & (d.isNull() | c.isNull() | b.isNull() | a2.isNull())) |
+        (d.isNotNull() & (c.isNull() | b.isNull() | a2.isNull())) |
+        (c.isNotNull() & (b.isNull() | a2.isNull())) |
+        (b.isNotNull() & a2.isNull()) |
+        # ---- out-of-order dates ----
+        (a2.isNotNull() & b.isNotNull() & (b < a2)) |
+        (b.isNotNull()  & c.isNotNull() & (c < b))  |
+        (c.isNotNull()  & d.isNotNull() & (d < c))  |
+        (d.isNotNull()  & e.isNotNull() & (e < d)),
+        F.lit(False)
+    ).otherwise(F.lit(True))
 )
+
+# Optional quick check
+display(df_OPPM.select("Project ID", "is_sequence",
+                       "Gate A2 Decision Date","Gate B Decision Date","Gate C Decision Date",
+                       "Gate D Decision Date","Gate E Decision Date").limit(50))
+
 
 
 
