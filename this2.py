@@ -1,203 +1,210 @@
 from pyspark.sql import functions as F
 import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
 
 # =========================================================
-# 0) QUICK CHECK: ensure required derived columns exist
+# Assumes you already built these columns:
+# - benchmark_eligible, is_sequence_full, project_status_gate_based
+# - Gate {X} Approval Date (planned)  [DATE]
+# - Gate {X} Decision Date (actual)   [DATE]
+# - {X}_timeliness_flag  (EARLY/ON_TIME/LATE/OVERDUE/UPCOMING/NO_PLAN)
+# - {X}_delay_days_actual_minus_planned (int, actual - planned)
+# And df_analysed exists.
 # =========================================================
-needed = [
-    "benchmark_eligible",
-    "seq_a2_b_status","seq_b_c_status","seq_c_d_status","seq_d_e_status",
-    "ct_a2_to_b_days","ct_b_to_c_days","ct_c_to_d_days","ct_d_to_e_days",
-    "Gate A2 Decision Date","Gate B Decision Date","Gate C Decision Date","Gate D Decision Date","Gate E Decision Date"
-]
-missing = [c for c in needed if c not in df_OPPM.columns]
-if missing:
-    raise Exception(
-        f"Missing columns: {missing}\n"
-        f"Run your calculated-fields block first (benchmark_eligible, seq_*, ct_*)."
+
+# ---------- 0) Base dataset ----------
+df_analysis = (
+    df_analysed
+    .filter((F.col("benchmark_eligible") == 1) & (F.col("is_sequence_full") == 1))
+    .withColumn(
+        "pm_clean",
+        F.when(F.trim(F.col("pm").cast("string")).isNull() | (F.trim(F.col("pm").cast("string")) == ""), F.lit("Unknown"))
+         .otherwise(F.trim(F.col("pm").cast("string")))
     )
-
-# =========================================================
-# 1) STRICT SEQUENCE FILTER FOR A2→E TIMELINE ANALYSIS
-#    Drop ENTIRE ROW if ANY transition is OUT_OF_ORDER
-# =========================================================
-df_OPPM = df_OPPM.withColumn(
-    "is_sequence_full",
-    F.when(
-        (F.col("seq_a2_b_status") != "OUT_OF_ORDER") &
-        (F.col("seq_b_c_status")  != "OUT_OF_ORDER") &
-        (F.col("seq_c_d_status")  != "OUT_OF_ORDER") &
-        (F.col("seq_d_e_status")  != "OUT_OF_ORDER"),
-        F.lit(1)
-    ).otherwise(F.lit(0))
 )
 
-# Analysis dataset (your rule)
-df_analysis = df_OPPM.filter(
-    (F.col("benchmark_eligible") == 1) &
-    (F.col("is_sequence_full") == 1)
+gates = ["A2", "B", "C", "D", "E"]
+
+# Helper: build a long-format DF with (gate, timeliness_flag, delay_days, pm_clean, status)
+stack_expr = "stack(5, " + ", ".join([
+    f"'{g}', `{g}_timeliness_flag`, `{g}_delay_days_actual_minus_planned`"
+    for g in gates
+]) + ") as (gate, timeliness_flag, delay_days)"
+
+df_long = (
+    df_analysis
+    .selectExpr("`Project ID`", "project_status_gate_based", "pm_clean", stack_expr)
 )
 
-print("Rows kept for A2→E analysis:", df_analysis.count())
-display(df_analysis.select(
-    "Project ID","benchmark_eligible","is_sequence_full",
-    "seq_a2_b_status","seq_b_c_status","seq_c_d_status","seq_d_e_status",
-    "Gate A2 Decision Date","Gate B Decision Date","Gate C Decision Date","Gate D Decision Date","Gate E Decision Date"
-).limit(20))
+# =========================================================
+# 1) Stacked bar: Timeliness breakdown by gate
+# =========================================================
+timeliness_counts = (
+    df_long
+    .groupBy("gate", "timeliness_flag")
+    .count()
+)
+
+# Convert to pandas pivot for stacked bar
+tc_pd = timeliness_counts.toPandas()
+pivot = (tc_pd.pivot(index="gate", columns="timeliness_flag", values="count")
+              .fillna(0)
+              .reindex(gates))
+
+# Make sure a consistent column order (only keep those that exist)
+flag_order = ["EARLY","ON_TIME","LATE","OVERDUE","UPCOMING","NO_PLAN"]
+flag_cols = [c for c in flag_order if c in pivot.columns]
+pivot = pivot[flag_cols]
+
+ax = pivot.plot(kind="bar", stacked=True, figsize=(10, 4))
+ax.set_xlabel("Gate")
+ax.set_ylabel("Number of projects")
+ax.set_title("Timeliness by Gate (Planned vs Actual / Due Status)")
+plt.tight_layout()
+plt.show()
+
+display(timeliness_counts.orderBy("gate", "timeliness_flag"))
 
 # =========================================================
-# 2) BENCHMARKS PER TRANSITION: P20 / P50 / P80 + Mean
-#    (computed only on OK datapoints per transition)
+# 2) Late-days distribution per gate (bar chart of percentiles)
+#    (Only where timeliness_flag == LATE and delay_days > 0)
 # =========================================================
-transitions = [
-    ("A2→B", "seq_a2_b_status", "ct_a2_to_b_days"),
-    ("B→C",  "seq_b_c_status",  "ct_b_to_c_days"),
-    ("C→D",  "seq_c_d_status",  "ct_c_to_d_days"),
-    ("D→E",  "seq_d_e_status",  "ct_d_to_e_days"),
-]
-
-bench_list = []
-for tname, status_col, ct_col in transitions:
-    b = (
-        df_analysis
-        .filter(F.col(status_col) == "OK")
-        .select(F.col(ct_col).cast("double").alias("cycle_days"))
-        .filter(F.col("cycle_days").isNotNull() & (F.col("cycle_days") >= 0))
-        .agg(
-            F.count("*").alias("n_datapoints"),
-            F.expr("percentile_approx(cycle_days, 0.2)").alias("P20_days"),
-            F.expr("percentile_approx(cycle_days, 0.5)").alias("P50_days"),
-            F.expr("percentile_approx(cycle_days, 0.8)").alias("P80_days"),
-            F.round(F.avg("cycle_days"), 1).alias("Mean_days")
-        )
-        .withColumn("transition", F.lit(tname))
+late_dist = (
+    df_long
+    .filter((F.col("timeliness_flag") == "LATE") & (F.col("delay_days").isNotNull()) & (F.col("delay_days") > 0))
+    .groupBy("gate")
+    .agg(
+        F.count("*").alias("n_late"),
+        F.expr("percentile_approx(delay_days, 0.5)").alias("P50_late_days"),
+        F.expr("percentile_approx(delay_days, 0.8)").alias("P80_late_days"),
+        F.expr("percentile_approx(delay_days, 0.9)").alias("P90_late_days"),
     )
-    bench_list.append(b)
+    .orderBy("gate")
+)
 
-benchmarks = bench_list[0]
-for b in bench_list[1:]:
-    benchmarks = benchmarks.unionByName(b)
+ld_pd = late_dist.toPandas().set_index("gate").reindex(gates).fillna(0)
 
-benchmarks = benchmarks.select("transition","n_datapoints","P20_days","P50_days","P80_days","Mean_days") \
-                       .orderBy("transition")
-
-display(benchmarks)
-
-# =========================================================
-# 3) BAR CHART: P20 vs P50 vs P80 (distribution per transition)
-# =========================================================
-bp = benchmarks.toPandas().sort_values("transition")
-
-x = np.arange(len(bp["transition"]))
+x = np.arange(len(gates))
 w = 0.25
 
 plt.figure(figsize=(10, 4))
-plt.bar(x - w, bp["P20_days"], width=w, label="P20")
-plt.bar(x,      bp["P50_days"], width=w, label="P50 (Median)")
-plt.bar(x + w,  bp["P80_days"], width=w, label="P80")
-
-plt.xticks(x, bp["transition"])
-plt.xlabel("Transition")
-plt.ylabel("Days")
-plt.title("Transition Time Distribution (P20 / P50 / P80) — Sequence-safe + Benchmark eligible")
-
-# annotate sample size
-for i, n in enumerate(bp["n_datapoints"].values):
-    plt.text(i, bp["P80_days"].values[i], f" n={int(n)}", ha="center", va="bottom", fontsize=9)
-
+plt.bar(x - w, ld_pd["P50_late_days"], width=w, label="P50 late days")
+plt.bar(x,      ld_pd["P80_late_days"], width=w, label="P80 late days")
+plt.bar(x + w,  ld_pd["P90_late_days"], width=w, label="P90 late days")
+plt.xticks(x, gates)
+plt.xlabel("Gate")
+plt.ylabel("Days late (Actual - Planned)")
+plt.title("Late Duration Distribution by Gate (Percentiles)")
+for i, n in enumerate(ld_pd["n_late"].values):
+    plt.text(i, max(ld_pd["P90_late_days"].values[i], 0), f" n={int(n)}", ha="center", va="bottom", fontsize=9)
 plt.legend()
 plt.tight_layout()
 plt.show()
 
+display(late_dist)
+
 # =========================================================
-# 4) BAR CHART: Which transition takes the most time overall (Mean)
+# 3) Overdue pipeline view (In Progress + Not Started): count + avg overdue days by gate
+#    Overdue means: actual missing AND today > planned (approval) date
 # =========================================================
-plt.figure(figsize=(8.5, 3.8))
-plt.bar(bp["transition"], bp["Mean_days"])
-plt.xlabel("Transition")
-plt.ylabel("Mean days")
-plt.title("Which Gate Transition Takes the Most Time Overall (Mean) — Sequence-safe + Benchmark eligible")
+# Build a long DF that includes planned/actual dates too (for overdue days calculation)
+stack_expr_dates = "stack(5, " + ", ".join([
+    f"'{g}', `Gate {g} Approval Date`, `Gate {g} Decision Date`"
+    for g in gates
+]) + ") as (gate, planned_date, actual_date)"
+
+df_long_dates = (
+    df_analysis
+    .selectExpr("`Project ID`", "project_status_gate_based", stack_expr_dates)
+)
+
+df_overdue = (
+    df_long_dates
+    .filter(F.col("project_status_gate_based").isin("In Progress", "Not Started"))
+    .filter(F.col("planned_date").isNotNull() & F.col("actual_date").isNull())
+    .withColumn("overdue_days", F.datediff(F.current_date(), F.col("planned_date")))
+    .filter(F.col("overdue_days") > 0)
+)
+
+overdue_summary = (
+    df_overdue
+    .groupBy("gate")
+    .agg(
+        F.count("*").alias("overdue_count"),
+        F.round(F.avg("overdue_days"), 1).alias("avg_overdue_days")
+    )
+    .orderBy("gate")
+)
+
+os_pd = overdue_summary.toPandas().set_index("gate").reindex(gates).fillna(0)
+
+# Bar chart: overdue count
+plt.figure(figsize=(10, 3.6))
+plt.bar(os_pd.index, os_pd["overdue_count"])
+plt.xlabel("Gate")
+plt.ylabel("Number of overdue items")
+plt.title("Overdue Planned Gates (In Progress + Not Started)")
 plt.tight_layout()
 plt.show()
 
+# Bar chart: average overdue days
+plt.figure(figsize=(10, 3.6))
+plt.bar(os_pd.index, os_pd["avg_overdue_days"])
+plt.xlabel("Gate")
+plt.ylabel("Average overdue days")
+plt.title("Average Overdue Days by Gate (In Progress + Not Started)")
+plt.tight_layout()
+plt.show()
+
+display(overdue_summary)
+
 # =========================================================
-# 5) TOP 10 PROJECTS PER TRANSITION (4 BAR CHARTS)
+# 4) Manager accountability: Top 10 PMs with highest median lateness per gate (bar)
+#    (Only LATE with delay_days > 0)
+#    Uses n>=MIN_N to avoid tiny-sample rankings
 # =========================================================
-def top10_projects_for_transition(tname, status_col, ct_col):
+MIN_N = 20
+TOP_K = 10
+
+def pm_late_rank_for_gate(gate):
     return (
-        df_analysis
-        .filter(F.col(status_col) == "OK")
-        .select(
-            F.col("Project ID"),
-            F.col("Project Title"),
-            F.col("region"),
-            F.col("Investment Type"),
-            F.col("Delivery Unit"),
-            F.col(ct_col).cast("int").alias("duration_days")
+        df_long
+        .filter((F.col("gate") == gate) &
+                (F.col("timeliness_flag") == "LATE") &
+                (F.col("delay_days").isNotNull()) & (F.col("delay_days") > 0) &
+                (F.col("pm_clean") != "Unknown"))
+        .groupBy("pm_clean")
+        .agg(
+            F.count("*").alias("n_late_projects"),
+            F.expr("percentile_approx(delay_days, 0.5)").alias("median_late_days"),
+            F.round(F.avg("delay_days"), 1).alias("mean_late_days")
         )
-        .filter(F.col("duration_days").isNotNull() & (F.col("duration_days") >= 0))
-        .orderBy(F.desc("duration_days"))
-        .limit(10)
-        .withColumn("transition", F.lit(tname))
+        .filter(F.col("n_late_projects") >= MIN_N)
+        .orderBy(F.desc("median_late_days"))
+        .limit(TOP_K)
+        .withColumn("gate", F.lit(gate))
     )
 
-def plot_top10_bar(df_top10, title):
-    pd_top = df_top10.select("Project ID", "duration_days").toPandas()
+def plot_pm_bar(df_top, title):
+    pdf = df_top.select("pm_clean", "median_late_days", "n_late_projects").toPandas()
+    if pdf.empty:
+        print(f"{title}: No PMs meet n_late_projects >= {MIN_N}. Reduce MIN_N.")
+        return
+    pdf = pdf.sort_values("median_late_days", ascending=True)
     plt.figure(figsize=(10, 4))
-    plt.barh(pd_top["Project ID"][::-1], pd_top["duration_days"][::-1])
-    plt.xlabel("Days")
-    plt.ylabel("Project ID")
+    plt.barh(pdf["pm_clean"], pdf["median_late_days"])
+    plt.xlabel("Median late days (Actual - Planned)")
+    plt.ylabel("PM")
     plt.title(title)
+    for i, (val, n) in enumerate(zip(pdf["median_late_days"], pdf["n_late_projects"])):
+        plt.text(val, i, f"  n={int(n)}", va="center")
     plt.tight_layout()
     plt.show()
 
-top10_a2b = top10_projects_for_transition("A2→B", "seq_a2_b_status", "ct_a2_to_b_days")
-top10_bc  = top10_projects_for_transition("B→C",  "seq_b_c_status",  "ct_b_to_c_days")
-top10_cd  = top10_projects_for_transition("C→D",  "seq_c_d_status",  "ct_c_to_d_days")
-top10_de  = top10_projects_for_transition("D→E",  "seq_d_e_status",  "ct_d_to_e_days")
+for g in gates:
+    df_top_pm = pm_late_rank_for_gate(g)
+    display(df_top_pm)
+    plot_pm_bar(df_top_pm, f"Top {TOP_K} PMs by Median Lateness — Gate {g} (n≥{MIN_N})")
 
-print("Top 10 A2→B")
-display(top10_a2b); plot_top10_bar(top10_a2b, "Top 10 Longest Projects — A2→B (Sequence-safe)")
 
-print("Top 10 B→C")
-display(top10_bc);  plot_top10_bar(top10_bc,  "Top 10 Longest Projects — B→C (Sequence-safe)")
-
-print("Top 10 C→D")
-display(top10_cd);  plot_top10_bar(top10_cd,  "Top 10 Longest Projects — C→D (Sequence-safe)")
-
-print("Top 10 D→E")
-display(top10_de);  plot_top10_bar(top10_de,  "Top 10 Longest Projects — D→E (Sequence-safe)")
-
-# =========================================================
-# 6) TOP 10 PROJECTS FOR TOTAL A2→E (BAR CHART)
-#    Requires A2 + E present (and sequence-safe dataset already applied)
-# =========================================================
-df_top10_a2e = (
-    df_analysis
-    .filter(F.col("Gate A2 Decision Date").isNotNull() & F.col("Gate E Decision Date").isNotNull())
-    .withColumn("total_A2_to_E_days", F.datediff(F.col("Gate E Decision Date"), F.col("Gate A2 Decision Date")))
-    .filter(F.col("total_A2_to_E_days").isNotNull() & (F.col("total_A2_to_E_days") >= 0))
-    .select(
-        "Project ID","Project Title","region","Investment Type","Delivery Unit",
-        "total_A2_to_E_days",
-        "Gate A2 Decision Date","Gate E Decision Date"
-    )
-    .orderBy(F.desc("total_A2_to_E_days"))
-    .limit(10)
-)
-
-print("Top 10 Total A2→E")
-display(df_top10_a2e)
-
-pd_a2e = df_top10_a2e.select("Project ID","total_A2_tosA2_to_E_days".replace("sA2","A2")).toPandas()  # harmless safety if copy glitches
-# If the above line ever errors, just use:
-# pd_a2e = df_top10_a2e.select("Project ID","total_A2_to_E_days").toPandas()
-
-plt.figure(figsize=(10, 4))
-plt.barh(pd_a2e["Project ID"][::-1], pd_a2e["total_A2_to_E_days"][::-1])
-plt.xlabel("Total Days (A2→E)")
-plt.ylabel("Project ID")
-plt.title("Top 10 Longest Projects — Total A2→E (Sequence-safe + Benchmark eligible)")
-plt.tight_layout()
-plt.show()
