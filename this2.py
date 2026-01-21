@@ -711,3 +711,168 @@ plt.show()
 # Optional: show the underlying P20/P50/P80 table
 display(qdf)
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from pyspark.sql import functions as F
+import matplotlib.pyplot as plt
+
+# ---------------------------
+# Setup
+# ---------------------------
+base_df = df_OPPM.filter(F.col("benchmark_eligible") == 1)
+
+transitions = [
+    ("A2→B", "seq_a2_b_status", "ct_a2_to_b_days"),
+    ("B→C",  "seq_b_c_status",  "ct_b_to_c_days"),
+    ("C→D",  "seq_c_d_status",  "ct_c_to_d_days"),
+    ("D→E",  "seq_d_e_status",  "ct_d_to_e_days"),
+]
+
+# ---------------------------
+# 1) Which transition takes the most time overall + bar chart
+#    (using Mean on valid/clean datapoints)
+# ---------------------------
+stats_list = []
+for tname, status_col, ct_col in transitions:
+    s = (
+        base_df
+        .filter(F.col(status_col) == "OK")
+        .select(F.col(ct_col).cast("double").alias("cycle_days"))
+        .filter(F.col("cycle_days").isNotNull())
+        .agg(
+            F.count("*").alias("n_datapoints"),
+            F.round(F.avg("cycle_days"), 2).alias("mean_days"),
+            F.expr("percentile_approx(cycle_days, 0.5)").alias("median_days")
+        )
+        .withColumn("transition", F.lit(tname))
+    )
+    stats_list.append(s)
+
+transition_stats = stats_list[0]
+for s in stats_list[1:]:
+    transition_stats = transition_stats.unionByName(s)
+
+transition_stats = transition_stats.select("transition", "n_datapoints", "mean_days", "median_days") \
+                                   .orderBy(F.desc("mean_days"))
+
+display(transition_stats)
+
+# Bar chart (Mean days by transition)
+ts_pd = transition_stats.toPandas()
+
+plt.figure(figsize=(8.5, 3.5))
+plt.bar(ts_pd["transition"], ts_pd["mean_days"])
+plt.xlabel("Gate transition")
+plt.ylabel("Mean duration (days)")
+plt.title("Which Gate Transition Takes the Most Time Overall (Mean of valid datapoints)")
+plt.tight_layout()
+plt.show()
+
+print("Longest transition overall by mean:",
+      ts_pd.iloc[0]["transition"], "(", ts_pd.iloc[0]["mean_days"], "days )")
+
+# ---------------------------
+# 2) Top 10 projects with longest durations for each transition
+# ---------------------------
+def top10_for_transition(tname, status_col, ct_col):
+    return (
+        base_df
+        .filter(F.col(status_col) == "OK")
+        .select(
+            F.col("Project ID"),
+            F.col("Project Title"),
+            F.col("region"),
+            F.col("Investment Type"),
+            F.col("Delivery Unit"),
+            F.col(ct_col).cast("int").alias("duration_days"),
+            F.lit(tname).alias("transition")
+        )
+        .filter(F.col("duration_days").isNotNull())
+        .orderBy(F.desc("duration_days"))
+        .limit(10)
+    )
+
+top10_a2b = top10_for_transition("A2→B", "seq_a2_b_status", "ct_a2_to_b_days")
+top10_bc  = top10_for_transition("B→C",  "seq_b_c_status",  "ct_b_to_c_days")
+top10_cd  = top10_for_transition("C→D",  "seq_c_d_status",  "ct_c_to_d_days")
+top10_de  = top10_for_transition("D→E",  "seq_d_e_status",  "ct_d_to_e_days")
+
+print("Top 10 longest A2→B:")
+display(top10_a2b)
+
+print("Top 10 longest B→C:")
+display(top10_bc)
+
+print("Top 10 longest C→D:")
+display(top10_cd)
+
+print("Top 10 longest D→E:")
+display(top10_de)
+
+# Optional: one combined table for all transitions (top 10 each)
+top10_all_transitions = top10_a2b.unionByName(top10_bc).unionByName(top10_cd).unionByName(top10_de)
+display(top10_all_transitions.orderBy("transition", F.desc("duration_days")))
+
+# ---------------------------
+# 3) Top 10 projects with longest total duration A2→E
+#    (Completed + sequence OK + A2 & E present)
+# ---------------------------
+df_top10_a2e = (
+    base_df
+    .filter(F.col("project_status_gate_based") == "Completed")
+    .filter(
+        (F.col("Gate A2 Decision Date").isNotNull()) &
+        (F.col("Gate E Decision Date").isNotNull()) &
+        (F.col("seq_a2_b_status") == "OK") &
+        (F.col("seq_b_c_status")  == "OK") &
+        (F.col("seq_c_d_status")  == "OK") &
+        (F.col("seq_d_e_status")  == "OK")
+    )
+    .withColumn("total_A2_to_E_days", F.datediff(F.col("Gate E Decision Date"), F.col("Gate A2 Decision Date")))
+    .select(
+        F.col("Project ID"),
+        F.col("Project Title"),
+        F.col("region"),
+        F.col("Investment Type"),
+        F.col("Delivery Unit"),
+        "total_A2_to_E_days",
+        "Gate A2 Decision Date",
+        "Gate E Decision Date",
+        "ct_a2_to_b_days", "ct_b_to_c_days", "ct_c_to_d_days", "ct_d_to_e_days"
+    )
+    .orderBy(F.desc("total_A2_to_E_days"))
+    .limit(10)
+)
+
+print("Top 10 projects with longest total duration A2→E:")
+display(df_top10_a2e)
+
