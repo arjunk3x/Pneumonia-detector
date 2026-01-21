@@ -745,23 +745,9 @@ display(qdf)
 from pyspark.sql import functions as F
 import matplotlib.pyplot as plt
 
-# ---------------------------
-# Safety check: required columns
-# ---------------------------
-required = [
-    "Project ID", "Project Title", "region", "Investment Type", "Delivery Unit",
-    "benchmark_eligible", "project_status_gate_based",
-    "seq_a2_b_status","seq_b_c_status","seq_c_d_status","seq_d_e_status",
-    "ct_a2_to_b_days","ct_b_to_c_days","ct_c_to_d_days","ct_d_to_e_days",
-    "Gate A2 Decision Date","Gate E Decision Date"
-]
-missing_cols = [c for c in required if c not in df_OPPM.columns]
-if missing_cols:
-    raise Exception(f"Missing columns in df_OPPM: {missing_cols}\nRun the calculated-fields block first.")
-
-# ---------------------------
-# Base filtered df for benchmarking
-# ---------------------------
+# ---------------------------------------------------------
+# Base df: keep benchmark eligible (optional) + required cols
+# ---------------------------------------------------------
 base_df = df_OPPM.filter(F.col("benchmark_eligible") == 1)
 
 transitions = [
@@ -771,17 +757,16 @@ transitions = [
     ("D→E",  "seq_d_e_status",  "ct_d_to_e_days"),
 ]
 
-# ==========================================================
-# 1) Which gate transition takes the most time overall + BAR
-#    (Mean and Median shown as separate bar charts)
-# ==========================================================
+# =========================================================
+# 1) Transition that takes the most time overall (sequence OK)
+# =========================================================
 stats_list = []
 for tname, status_col, ct_col in transitions:
     s = (
         base_df
-        .filter(F.col(status_col) == "OK")
+        .filter(F.col(status_col) == "OK")                         # <-- sequence OK only
         .select(F.col(ct_col).cast("double").alias("cycle_days"))
-        .filter(F.col("cycle_days").isNotNull())
+        .filter(F.col("cycle_days").isNotNull() & (F.col("cycle_days") >= 0))
         .agg(
             F.count("*").alias("n_datapoints"),
             F.round(F.avg("cycle_days"), 2).alias("mean_days"),
@@ -802,42 +787,31 @@ display(transition_stats)
 
 ts_pd = transition_stats.toPandas()
 
-# --- Bar chart: Mean days by transition
+# Bar: mean
 plt.figure(figsize=(7.5, 3.5))
 plt.bar(ts_pd["transition"], ts_pd["mean_days"])
 plt.xlabel("Gate transition")
 plt.ylabel("Mean duration (days)")
-plt.title("Mean Cycle Time by Gate Transition (benchmark_eligible + seq OK)")
+plt.title("Mean Cycle Time by Transition (Sequence OK only)")
 plt.tight_layout()
 plt.show()
 
-# --- Bar chart: Median (P50) days by transition
+# Bar: median
 plt.figure(figsize=(7.5, 3.5))
 plt.bar(ts_pd["transition"], ts_pd["median_days"])
 plt.xlabel("Gate transition")
 plt.ylabel("Median duration (days)")
-plt.title("Median (P50) Cycle Time by Gate Transition (benchmark_eligible + seq OK)")
+plt.title("Median (P50) Cycle Time by Transition (Sequence OK only)")
 plt.tight_layout()
 plt.show()
 
-# --- Bonus bar: n_datapoints per transition (reliability)
-plt.figure(figsize=(7.5, 3.5))
-plt.bar(ts_pd["transition"], ts_pd["n_datapoints"])
-plt.xlabel("Gate transition")
-plt.ylabel("Number of valid datapoints")
-plt.title("Datapoints Available per Transition (after filters)")
-plt.tight_layout()
-plt.show()
-
-
-# ==========================================================
-# 2) Top 10 projects with longest durations for each transition
-#    + BAR CHART for each transition (4 charts)
-# ==========================================================
+# =========================================================
+# 2) Top 10 projects per transition (sequence OK only)
+# =========================================================
 def top10_for_transition(tname, status_col, ct_col):
     return (
         base_df
-        .filter(F.col(status_col) == "OK")
+        .filter(F.col(status_col) == "OK")  # <-- sequence OK only
         .select(
             F.col("Project ID"),
             F.col("Project Title"),
@@ -846,7 +820,7 @@ def top10_for_transition(tname, status_col, ct_col):
             F.col("Delivery Unit"),
             F.col(ct_col).cast("int").alias("duration_days")
         )
-        .filter(F.col("duration_days").isNotNull())
+        .filter(F.col("duration_days").isNotNull() & (F.col("duration_days") >= 0))
         .orderBy(F.desc("duration_days"))
         .limit(10)
         .withColumn("transition", F.lit(tname))
@@ -854,7 +828,6 @@ def top10_for_transition(tname, status_col, ct_col):
 
 def plot_top10_bar(df_top10, title):
     pd_top = df_top10.select("Project ID", "duration_days").toPandas()
-    # Plot as horizontal bar for readability
     plt.figure(figsize=(9, 4))
     plt.barh(pd_top["Project ID"][::-1], pd_top["duration_days"][::-1])
     plt.xlabel("Duration (days)")
@@ -868,26 +841,14 @@ top10_bc  = top10_for_transition("B→C",  "seq_b_c_status",  "ct_b_to_c_days")
 top10_cd  = top10_for_transition("C→D",  "seq_c_d_status",  "ct_c_to_d_days")
 top10_de  = top10_for_transition("D→E",  "seq_d_e_status",  "ct_d_to_e_days")
 
-print("Top 10 longest A2→B (table):")
-display(top10_a2b)
-plot_top10_bar(top10_a2b, "Top 10 Longest Projects: A2→B")
+display(top10_a2b); plot_top10_bar(top10_a2b, "Top 10 Longest Projects: A2→B (Sequence OK)")
+display(top10_bc);  plot_top10_bar(top10_bc,  "Top 10 Longest Projects: B→C (Sequence OK)")
+display(top10_cd);  plot_top10_bar(top10_cd,  "Top 10 Longest Projects: C→D (Sequence OK)")
+display(top10_de);  plot_top10_bar(top10_de,  "Top 10 Longest Projects: D→E (Sequence OK)")
 
-print("Top 10 longest B→C (table):")
-display(top10_bc)
-plot_top10_bar(top10_bc, "Top 10 Longest Projects: B→C")
-
-print("Top 10 longest C→D (table):")
-display(top10_cd)
-plot_top10_bar(top10_cd, "Top 10 Longest Projects: C→D")
-
-print("Top 10 longest D→E (table):")
-display(top10_de)
-plot_top10_bar(top10_de, "Top 10 Longest Projects: D→E")
-
-
-# ==========================================================
-# 3) Top 10 projects with longest total duration A2→E + BAR
-# ==========================================================
+# =========================================================
+# 3) Top 10 projects with longest total A2→E (ALL transitions OK)
+# =========================================================
 df_top10_a2e = (
     base_df
     .filter(F.col("project_status_gate_based") == "Completed")
@@ -898,8 +859,9 @@ df_top10_a2e = (
         (F.col("seq_b_c_status")  == "OK") &
         (F.col("seq_c_d_status")  == "OK") &
         (F.col("seq_d_e_status")  == "OK")
-    )
+    )  # <-- requires full valid sequence across lifecycle
     .withColumn("total_A2_to_E_days", F.datediff(F.col("Gate E Decision Date"), F.col("Gate A2 Decision Date")))
+    .filter(F.col("total_A2_to_E_days").isNotNull() & (F.col("total_A2_to_E_days") >= 0))
     .select(
         "Project ID",
         "Project Title",
@@ -915,19 +877,19 @@ df_top10_a2e = (
     .limit(10)
 )
 
-print("Top 10 longest total duration A2→E (table):")
 display(df_top10_a2e)
 
-# Bar chart for Top 10 A2→E
+# Bar chart: Top 10 A2→E
 pd_a2e = df_top10_a2e.select("Project ID","total_A2_to_E_days").toPandas()
-
 plt.figure(figsize=(9, 4))
 plt.barh(pd_a2e["Project ID"][::-1], pd_a2e["total_A2_to_E_days"][::-1])
 plt.xlabel("Total duration A2→E (days)")
 plt.ylabel("Project ID")
-plt.title("Top 10 Longest Projects: Total A2→E")
+plt.title("Top 10 Longest Projects: Total A2→E (All Transitions Sequence OK)")
 plt.tight_layout()
 plt.show()
+
+
 
 
 
