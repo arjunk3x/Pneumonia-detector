@@ -3,160 +3,180 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 # -----------------------------
-# 0) Start from your filtered dataset (as you asked)
+# 0) Base DF for visuals (your required filters)
 # -----------------------------
-df_analysis = (
+df_viz = (
     df_analysed
     .filter((F.col("benchmark_eligible") == 1) & (F.col("is_sequence_full") == 1))
 )
 
-# OPTIONAL: if you only want completed projects for this root-cause view, uncomment:
-# df_analysis = df_analysis.filter(F.col("project_status_gate_based") == "Completed")
+# Optional but recommended: clean group columns so nulls don't collapse everything
+df_viz = (
+    df_viz
+    .withColumn("pm_clean", F.coalesce(F.trim(F.col("pm").cast("string")), F.lit("Unknown")))
+    .withColumn("region_clean", F.coalesce(F.trim(F.col("region").cast("string")), F.lit("Unknown")))
+)
+
+# Gates + timeliness flag columns you already created earlier
+gates = ["A2", "B", "C", "D", "E"]
+flag_cols = [f"{g}_timeliness_flag" for g in gates]
 
 # -----------------------------
-# 1) Build an ordered gate/status array from your timeliness flags
+# 1) Convert wide -> long (one row per project x gate)
 # -----------------------------
-gate_order = ["A2", "B", "C", "D", "E"]
-flag_cols = {g: f"{g}_timeliness_flag" for g in gate_order}
+# This makes it easy to count statuses by manager/region
+stack_expr = "stack(5, " + ", ".join([f"'{g}', {g}_timeliness_flag" for g in gates]) + ") as (gate, status)"
 
-def status_col(cname):
-    # Normalize status to uppercase + fill nulls
-    return F.upper(F.coalesce(F.col(cname).cast("string"), F.lit("UNKNOWN")))
-
-gate_status_arr = F.array(*[
-    F.struct(
-        F.lit(g).alias("gate"),
-        status_col(flag_cols[g]).alias("status")
-    )
-    for g in gate_order
-])
-
-df_rc = (
-    df_analysis
+df_long = (
+    df_viz
     .select(
         F.col("Project ID").alias("project_id"),
-        gate_status_arr.alias("gate_status_arr")
+        "pm_clean",
+        "region_clean",
+        F.expr(stack_expr)
     )
+    .withColumn("status", F.coalesce(F.col("status"), F.lit("UNKNOWN")))
 )
 
-# -----------------------------
-# 2) Find delayed gates (LATE or OVERDUE), first delay, second delay
-# -----------------------------
-df_rc = (
-    df_rc
-    .withColumn("delayed_arr", F.expr("filter(gate_status_arr, x -> x.status IN ('LATE','OVERDUE'))"))
-    .withColumn("delay_count", F.size("delayed_arr"))
-    .withColumn("first_delay_gate",
-                F.when(F.col("delay_count") > 0, F.element_at("delayed_arr", 1).getField("gate"))
-                 .otherwise(F.lit("NO_DELAY")))
-    .withColumn("first_delay_status",
-                F.when(F.col("delay_count") > 0, F.element_at("delayed_arr", 1).getField("status"))
-                 .otherwise(F.lit(None)))
-    .withColumn("second_delay_gate",
-                F.when(F.col("delay_count") > 1, F.element_at("delayed_arr", 2).getField("gate"))
-                 .otherwise(F.lit(None)))
-    .withColumn("delayed_gates_path",
-                F.concat_ws("→", F.transform("delayed_arr", lambda x: x["gate"])))
-)
+# Common status order (adjust to match your exact labels if needed)
+status_order = ["EARLY", "ON TIME", "LATE", "OVERDUE", "UPCOMING", "NO_PLAN", "UNKNOWN"]
 
-# -----------------------------
-# 3) Domino vs Second-hit logic
-#    Domino = delayed gates are consecutive in the process (no "gap" gate in between)
-#    Second hit = delays happen, then things are OK, then delay again later (gap exists)
-# -----------------------------
-gate_idx_map = F.create_map(*sum([[F.lit(g), F.lit(i+1)] for i, g in enumerate(gate_order)], []))
 
-df_rc = (
-    df_rc
-    .withColumn(
-        "delayed_idx_arr",
-        F.transform("delayed_arr", lambda x: F.element_at(gate_idx_map, x["gate"]).cast("int"))
+# ============================================================
+# 1) ON-TIME SCORECARD (STACKED BARS) — Manager or Region
+# ============================================================
+
+def plot_scorecard_stacked(df_long, group_col="pm_clean", top_n=15, as_percent=False):
+    """
+    Stacked bar chart: for each group (manager/region), how many gate records are
+    EARLY / ON TIME / LATE / OVERDUE / UPCOMING / NO_PLAN / UNKNOWN.
+    """
+    # Count statuses by group
+    counts = (
+        df_long
+        .groupBy(group_col, "status")
+        .count()
     )
-    .withColumn("min_delay_idx", F.array_min("delayed_idx_arr"))
-    .withColumn("max_delay_idx", F.array_max("delayed_idx_arr"))
-    .withColumn(
-        "is_consecutive",
-        F.when(
-            F.col("delay_count") > 1,
-            (F.col("max_delay_idx") - F.col("min_delay_idx") + F.lit(1)) == F.col("delay_count")
-        ).otherwise(F.lit(False))
+
+    # Pivot statuses into columns
+    pivoted = (
+        counts
+        .groupBy(group_col)
+        .pivot("status")
+        .sum("count")
+        .na.fill(0)
     )
-    .withColumn(
-        "delay_pattern",
-        F.when(F.col("delay_count") == 0, F.lit("No late/overdue"))
-         .when(F.col("delay_count") == 1, F.lit("Single hit"))
-         .when(F.col("is_consecutive") == True, F.lit("Domino (continuous)"))
-         .otherwise(F.lit("Second hit (gap)"))
+
+    # Ensure all status columns exist
+    for s in status_order:
+        if s not in pivoted.columns:
+            pivoted = pivoted.withColumn(s, F.lit(0))
+
+    # Add total gate-records per group
+    pivoted = pivoted.withColumn("total", sum(F.col(s) for s in status_order))
+
+    # Pick top N groups by total volume (helps readability)
+    top_groups = pivoted.orderBy(F.desc("total")).limit(top_n)
+
+    pdf = top_groups.toPandas().set_index(group_col)
+
+    # Optional: convert to %
+    if as_percent:
+        denom = pdf["total"].replace(0, np.nan)
+        for s in status_order:
+            pdf[s] = (pdf[s] / denom) * 100
+        ylabel = "% of gate records"
+        title_suffix = "(Percent split)"
+    else:
+        ylabel = "Count of gate records"
+        title_suffix = "(Counts)"
+
+    # Plot stacked bars
+    plt.figure(figsize=(12, 5))
+    bottom = np.zeros(len(pdf))
+    x = np.arange(len(pdf))
+
+    for s in status_order:
+        vals = pdf[s].values
+        plt.bar(x, vals, bottom=bottom, label=s)
+        bottom += vals
+
+    plt.xticks(x, pdf.index, rotation=45, ha="right")
+    plt.ylabel(ylabel)
+    plt.title(f"On-time scorecard by {group_col} {title_suffix} — Top {top_n}")
+    plt.legend(ncol=3, bbox_to_anchor=(1.02, 1), loc="upper left")
+    plt.tight_layout()
+    plt.show()
+
+    display(top_groups)
+
+
+# Run scorecard for managers
+plot_scorecard_stacked(df_long, group_col="pm_clean", top_n=15, as_percent=False)
+
+# Run scorecard for regions
+plot_scorecard_stacked(df_long, group_col="region_clean", top_n=15, as_percent=False)
+
+
+# ============================================================
+# 2) OVERDUE BACKLOG (BAR CHART) — Gate × Manager/Region
+# ============================================================
+
+def plot_overdue_backlog(df_long, group_col="pm_clean", top_n=15):
+    """
+    Grouped bar chart: For top N groups (by total overdue),
+    show overdue counts per gate (A2, B, C, D, E).
+    """
+    overdue = (
+        df_long
+        .filter(F.col("status") == "OVERDUE")
+        .groupBy(group_col, "gate")
+        .count()
     )
-)
 
-# Quick inspect (optional)
-display(
-    df_rc.select("project_id", "first_delay_gate", "first_delay_status", "second_delay_gate",
-                 "delay_pattern", "delayed_gates_path")
-         .orderBy(F.desc("delay_count"))
-         .limit(30)
-)
+    # Total overdue per group to pick top N
+    overdue_totals = (
+        overdue
+        .groupBy(group_col)
+        .agg(F.sum("count").alias("overdue_total"))
+        .orderBy(F.desc("overdue_total"))
+        .limit(top_n)
+    )
 
-# -----------------------------
-# 4) VISUAL 1: "Where do delays start?" (first gate that goes late/overdue)
-# -----------------------------
-first_gate_counts = (
-    df_rc.groupBy("first_delay_gate")
-         .count()
-         .orderBy(F.desc("count"))
-)
+    overdue_top = overdue.join(overdue_totals.select(group_col), on=group_col, how="inner")
 
-pdf1 = first_gate_counts.toPandas()
+    # Pivot gates into columns
+    pivoted = (
+        overdue_top
+        .groupBy(group_col)
+        .pivot("gate", gates)
+        .sum("count")
+        .na.fill(0)
+    )
 
-plt.figure(figsize=(10,4))
-plt.bar(pdf1["first_delay_gate"], pdf1["count"])
-plt.title("Where do delays start? (First gate marked LATE/OVERDUE)")
-plt.xlabel("First gate that goes late/overdue")
-plt.ylabel("Number of projects")
-plt.xticks(rotation=0)
-plt.tight_layout()
-plt.show()
+    pdf = pivoted.toPandas().set_index(group_col)
 
-display(first_gate_counts)
+    # Grouped bar chart (one bar per gate per group)
+    plt.figure(figsize=(12, 5))
+    x = np.arange(len(pdf))
+    width = 0.15
 
-# -----------------------------
-# 5) VISUAL 2: Domino vs Second-hit (stacked by first delay gate)
-# -----------------------------
-pattern_counts = (
-    df_rc.groupBy("first_delay_gate", "delay_pattern")
-         .count()
-)
+    for i, g in enumerate(gates):
+        vals = pdf[g].values if g in pdf.columns else np.zeros(len(pdf))
+        plt.bar(x + (i - 2) * width, vals, width=width, label=g)
 
-pivoted = (
-    pattern_counts
-    .groupBy("first_delay_gate")
-    .pivot("delay_pattern", ["No late/overdue", "Single hit", "Domino (continuous)", "Second hit (gap)"])
-    .sum("count")
-    .na.fill(0)
-)
+    plt.xticks(x, pdf.index, rotation=45, ha="right")
+    plt.ylabel("Overdue count")
+    plt.title(f"Overdue backlog by gate × {group_col} — Top {top_n} by overdue volume")
+    plt.legend(title="Gate", ncol=5, bbox_to_anchor=(1.02, 1), loc="upper left")
+    plt.tight_layout()
+    plt.show()
 
-pdf2 = pivoted.toPandas().set_index("first_delay_gate")
+    display(overdue_totals)
 
-# Sort by total volume
-pdf2["TOTAL"] = pdf2.sum(axis=1)
-pdf2 = pdf2.sort_values("TOTAL", ascending=False).drop(columns=["TOTAL"])
 
-plt.figure(figsize=(12,5))
-bottom = np.zeros(len(pdf2))
-x = np.arange(len(pdf2))
+# Run overdue backlog for managers
+plot_overdue_backlog(df_long, group_col="pm_clean", top_n=15)
 
-for col in pdf2.columns:
-    vals = pdf2[col].values
-    plt.bar(x, vals, bottom=bottom, label=col)
-    bottom += vals
-
-plt.xticks(x, pdf2.index, rotation=0)
-plt.title("Domino vs Second-hit (grouped by first delay gate)")
-plt.xlabel("First delay gate")
-plt.ylabel("Number of projects")
-plt.legend(ncol=2, bbox_to_anchor=(1.02, 1), loc="upper left")
-plt.tight_layout()
-plt.show()
-
-display(pivoted)
+# Run overdue backlog for regions
+plot_overdue_backlog(df_long, group_col="region_clean", top_n=15)
