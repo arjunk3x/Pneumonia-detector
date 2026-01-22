@@ -1,310 +1,281 @@
-# =========================
-# Rate-based + time-based metrics for OPPM vs P6 (size-agnostic)
-# Uses: df (your main dataframe) with "category" (OPPM/P6) + gate decision dates
-# Assumes you already have: benchmark_eligible, is_sequence_full
-# =========================
-
+# ============================================================
+# 0) LIBS
+# ============================================================
 from pyspark.sql import functions as F
+from pyspark.sql import types as T
 
-# -------------------------
-# 0) Column name helpers
-# -------------------------
-def pick_existing_col(df, *candidates):
-    """Return the first column name that exists in df.columns."""
-    for c in candidates:
-        if c in df.columns:
-            return c
-    raise ValueError(f"None of these columns exist: {candidates}")
-
-project_id_col = pick_existing_col(df, "Project ID", "ProjectID", "project_id")
-category_col   = pick_existing_col(df, "category", "Category")
-
-# Clean category -> force to "OPPM"/"P6" for stable grouping
-df = df.withColumn(
-    "category_clean",
-    F.when(F.lower(F.col(category_col)).like("%p6%"),   F.lit("P6"))
-     .when(F.lower(F.col(category_col)).like("%oppm%"), F.lit("OPPM"))
-     .otherwise(F.col(category_col))
+from pyspark.ml import Pipeline
+from pyspark.ml.feature import (
+    VectorAssembler, StandardScaler,
+    StringIndexer, OneHotEncoder
 )
-
-# Your strict filters to avoid noise/bad rows
-df_analysis = (
-    df.filter((F.col("benchmark_eligible") == 1) & (F.col("is_sequence_full") == 1))
-)
-
-analysis_date = F.current_date()  # or replace with F.to_date(F.lit("2026-01-22"))
-
-# -------------------------
-# 1) Gate plan/decision mapping (planned = "Approval Value" -> parsed date)
-#    If you already created "Gate X Approval Date" columns, we will use them.
-# -------------------------
-gate_map = [
-    # gate, decision date column, preferred planned date col, fallback raw planned col in your dataset
-    ("A2", "Gate A2 Decision Date", "Gate A2 Approval Date", "Gate A2 Approval Value"),
-    ("B",  "Gate B Decision Date",  "Gate B Approval Date",  "Gate B Approval Value Sanction"),
-    ("C",  "Gate C Decision Date",  "Gate C Approval Date",  "Gate C Approval Value FSA ACL"),
-    ("D",  "Gate D Decision Date",  "Gate D Approval Date",  "Gate D Approval Value"),
-    ("E",  "Gate E Decision Date",  "Gate E Approval Date",  "Gate E Approval Value"),
-]
-
-# If any "Gate X Approval Date" is missing, parse from the raw Approval Value into that date column
-def parse_plan_date(df_in, gate, preferred_plan_col, fallback_raw_col):
-    if preferred_plan_col in df_in.columns:
-        return df_in
-    if fallback_raw_col not in df_in.columns:
-        raise ValueError(f"Missing both planned date columns for Gate {gate}: {preferred_plan_col}, {fallback_raw_col}")
-
-    raw = F.trim(F.col(fallback_raw_col).cast("string"))
-    raw = F.when((raw == "") | raw.isNull(), F.lit(None)).otherwise(raw)
-
-    # Try common formats (extend if needed)
-    plan = F.coalesce(
-        F.to_date(raw, "yyyy-MM-dd"),
-        F.to_date(raw, "yyyy/MM/dd"),
-        F.to_date(raw, "dd/MM/yyyy"),
-        F.to_date(raw, "MM/dd/yyyy"),
-        F.to_date(raw, "dd-MM-yyyy"),
-        F.to_date(raw, "MM-dd-yyyy"),
-        F.to_date(raw, "dd-MMM-yyyy"),
-        F.to_date(raw, "dd-MMM-yy"),
-        F.to_date(F.to_timestamp(raw))
-    )
-
-    return df_in.withColumn(preferred_plan_col, plan)
-
-for gate, dcol, pcol, rawp in gate_map:
-    df_analysis = parse_plan_date(df_analysis, gate, pcol, rawp)
-
-# -------------------------
-# 2) Build per-gate timeliness flag + delay days (Actual - Planned)
-#    EARLY/ON_TIME/LATE: plan+decision present
-#    OVERDUE/UPCOMING: plan present, decision missing
-#    NO_PLAN: plan missing
-# -------------------------
-for gate, dcol, pcol, _ in gate_map:
-    decision = F.col(dcol)
-    plan     = F.col(pcol)
-
-    df_analysis = (
-        df_analysis
-        .withColumn(
-            f"{gate}_delay_days_actual_minus_planned",
-            F.when(plan.isNotNull() & decision.isNotNull(), F.datediff(decision, plan)).otherwise(F.lit(None).cast("int"))
-        )
-        .withColumn(
-            f"{gate}_timeliness_flag",
-            F.when(plan.isNull(), F.lit("NO_PLAN"))
-             .when(decision.isNotNull() & (decision < plan),  F.lit("EARLY"))
-             .when(decision.isNotNull() & (decision == plan), F.lit("ON_TIME"))
-             .when(decision.isNotNull() & (decision > plan),  F.lit("LATE"))
-             .when(decision.isNull() & (analysis_date > plan), F.lit("OVERDUE"))
-             .otherwise(F.lit("UPCOMING"))
-        )
-    )
-
-# -------------------------
-# 3) (1) Percentages/rates, not counts
-#    a) Scorecard split: % of total projects by status (per gate x group)
-#    b) % Late out of "decided + planned" only (fair execution metric)
-# -------------------------
-# Total projects per group (denominator for % of total)
-df_totals = df_analysis.groupBy("category_clean").agg(F.countDistinct(project_id_col).alias("total_projects"))
-
-# Long-form timeliness records: (category, gate, flag)
-timeliness_long = None
-for gate, _, _, _ in gate_map:
-    tmp = df_analysis.select(
-        "category_clean",
-        F.lit(gate).alias("gate"),
-        F.col(f"{gate}_timeliness_flag").alias("flag"),
-    )
-    timeliness_long = tmp if timeliness_long is None else timeliness_long.unionByName(tmp)
-
-# a) Scorecard: % of total projects by timeliness state
-gate_scorecard = (
-    timeliness_long
-    .groupBy("category_clean", "gate", "flag")
-    .agg(F.count("*").alias("n"))
-    .join(df_totals, on="category_clean", how="left")
-    .withColumn("pct_of_total", F.round(F.col("n") * 100.0 / F.col("total_projects"), 2))
-    .orderBy("gate", "category_clean", "flag")
-)
-
-display(gate_scorecard)
-
-# b) % Late among decided+planned only (EARLY/ON_TIME/LATE denom)
-late_rate = (
-    timeliness_long
-    .filter(F.col("flag").isin(["EARLY", "ON_TIME", "LATE"]))
-    .groupBy("category_clean", "gate")
-    .agg(
-        F.count("*").alias("n_decided_planned"),
-        F.sum(F.when(F.col("flag") == "LATE", 1).otherwise(0)).alias("n_late")
-    )
-    .withColumn("pct_late", F.round(F.col("n_late") * 100.0 / F.col("n_decided_planned"), 2))
-    .orderBy("gate", "category_clean")
-)
-
-display(late_rate)
-
-# -------------------------
-# 4) (2) Cycle-time percentiles per transition (P50/P80) – not averages
-# -------------------------
-transitions = [
-    ("A2→B", "seq_a2_b_status", "ct_a2_to_b_days"),
-    ("B→C",  "seq_b_c_status",  "ct_b_to_c_days"),
-    ("C→D",  "seq_c_d_status",  "ct_c_to_d_days"),
-    ("D→E",  "seq_d_e_status",  "ct_d_to_e_days"),
-]
-
-# Long-form transitions (category, transition, cycle_days)
-cycle_long = None
-for tname, status_col, ct_col in transitions:
-    tmp = (
-        df_analysis
-        .filter(F.col(status_col) == "OK")
-        .select(
-            "category_clean",
-            F.lit(tname).alias("transition"),
-            F.col(ct_col).cast("double").alias("cycle_days")
-        )
-        .filter(F.col("cycle_days").isNotNull() & (F.col("cycle_days") >= 0))
-    )
-    cycle_long = tmp if cycle_long is None else cycle_long.unionByName(tmp)
-
-cycle_stats = (
-    cycle_long
-    .groupBy("category_clean", "transition")
-    .agg(
-        F.count("*").alias("n"),
-        F.expr("percentile_approx(cycle_days, 0.5)").alias("p50_days"),
-        F.expr("percentile_approx(cycle_days, 0.8)").alias("p80_days"),
-        F.round(F.avg("cycle_days"), 1).alias("mean_days")
-    )
-    .orderBy("transition", "category_clean")
-)
-
-display(cycle_stats)
-
-# -------------------------
-# 5) (3) Risk score: % of P6 worse than OPPM P80 for each transition
-# -------------------------
-oppm_p80 = (
-    cycle_stats
-    .filter(F.col("category_clean") == "OPPM")
-    .select("transition", F.col("p80_days").alias("oppm_p80_days"))
-)
-
-p6_risk = (
-    cycle_long
-    .filter(F.col("category_clean") == "P6")
-    .join(oppm_p80, on="transition", how="inner")
-    .withColumn("is_worse_than_oppm_p80", (F.col("cycle_days") > F.col("oppm_p80_days")).cast("int"))
-    .groupBy("transition")
-    .agg(
-        F.count("*").alias("p6_n"),
-        F.round(F.avg("is_worse_than_oppm_p80") * 100.0, 2).alias("p6_pct_worse_than_oppm_p80"),
-        F.first("oppm_p80_days").alias("oppm_p80_days")
-    )
-    .orderBy("transition")
-)
-
-display(p6_risk)
-
-# -------------------------
-# 6) (4) Overdue burden: total overdue-days, avg overdue-days, overdue-days per 100 projects
-# -------------------------
-overdue_long = None
-for gate, dcol, pcol, _ in gate_map:
-    decision = F.col(dcol)
-    plan     = F.col(pcol)
-
-    tmp = (
-        df_analysis
-        .select(
-            "category_clean",
-            F.lit(gate).alias("gate"),
-            F.when(decision.isNull() & plan.isNotNull() & (analysis_date > plan),
-                   F.datediff(analysis_date, plan)
-            ).otherwise(F.lit(None).cast("int")).alias("overdue_days")
-        )
-    )
-
-    overdue_long = tmp if overdue_long is None else overdue_long.unionByName(tmp)
-
-overdue_burden = (
-    overdue_long
-    .withColumn("is_overdue", F.col("overdue_days").isNotNull().cast("int"))
-    .groupBy("category_clean", "gate")
-    .agg(
-        F.sum("is_overdue").alias("overdue_projects"),
-        F.sum(F.coalesce(F.col("overdue_days"), F.lit(0))).alias("total_overdue_days"),
-        F.round(F.avg("overdue_days"), 1).alias("avg_overdue_days")  # avg across overdue-only rows (nulls ignored)
-    )
-    .join(df_totals, on="category_clean", how="left")
-    .withColumn("overdue_days_per_100_projects", F.round(F.col("total_overdue_days") * 100.0 / F.col("total_projects"), 2))
-    .withColumn("pct_projects_overdue", F.round(F.col("overdue_projects") * 100.0 / F.col("total_projects"), 2))
-    .orderBy("gate", "category_clean")
-)
-
-display(overdue_burden)
+from pyspark.ml.clustering import KMeans
+from pyspark.ml.evaluation import ClusteringEvaluator
 
 # ============================================================
-# BAR CHARTS (matplotlib) — one per metric (no seaborn)
+# 1) START FROM df (your dataframe)
+#    - df contains category (OPPM/P6) and all engineered columns
 # ============================================================
-import matplotlib.pyplot as plt
+df0 = df
 
-def grouped_bar_from_spark(sdf, index_col, series_col, value_col, title, xlabel, ylabel):
-    pdf = sdf.select(index_col, series_col, value_col).toPandas()
-    pivot = pdf.pivot(index=index_col, columns=series_col, values=value_col).fillna(0)
-    pivot.plot(kind="bar", figsize=(10,4))
-    plt.title(title)
-    plt.xlabel(xlabel)
-    plt.ylabel(ylabel)
-    plt.xticks(rotation=0)
-    plt.tight_layout()
-    plt.show()
+# Helper: safe column check
+def require_cols(df_in, cols):
+    missing = [c for c in cols if c not in df_in.columns]
+    if missing:
+        raise ValueError(f"Missing columns: {missing}")
 
-# A) % Late (among decided+planned) per gate, split by group
-grouped_bar_from_spark(
-    late_rate,
-    index_col="gate",
-    series_col="category_clean",
-    value_col="pct_late",
-    title="% Late (out of Planned+Decided) by Gate — OPPM vs P6",
-    xlabel="Gate",
-    ylabel="% Late"
+# Optional: standardize category
+df0 = df0.withColumn("category_clean", F.upper(F.trim(F.col("category").cast("string"))))
+
+# ============================================================
+# 2) COMMON HELPERS
+# ============================================================
+def fit_kmeans_numeric(
+    df_in,
+    feature_cols,
+    out_col,
+    k=4,
+    seed=42,
+    filter_nulls=True,
+    scale=True
+):
+    """
+    Numeric-only KMeans with optional StandardScaler.
+    Adds a cluster column out_col and returns (df_out, model, silhouette)
+    """
+    require_cols(df_in, feature_cols)
+
+    df_use = df_in
+    if filter_nulls:
+        for c in feature_cols:
+            df_use = df_use.filter(F.col(c).isNotNull())
+
+    # Build feature vector
+    assembler = VectorAssembler(inputCols=feature_cols, outputCol=f"__vec_{out_col}")
+    stages = [assembler]
+
+    if scale:
+        scaler = StandardScaler(inputCol=f"__vec_{out_col}", outputCol=f"__scaled_{out_col}", withMean=True, withStd=True)
+        stages.append(scaler)
+        features_col = f"__scaled_{out_col}"
+    else:
+        features_col = f"__vec_{out_col}"
+
+    kmeans = KMeans(featuresCol=features_col, predictionCol=out_col, k=k, seed=seed)
+    stages.append(kmeans)
+
+    pipe = Pipeline(stages=stages)
+    model = pipe.fit(df_use)
+    df_out = model.transform(df_use)
+
+    evaluator = ClusteringEvaluator(featuresCol=features_col, predictionCol=out_col, metricName="silhouette")
+    sil = evaluator.evaluate(df_out)
+
+    return df_out, model, sil
+
+def pick_k_by_silhouette(df_in, feature_cols, ks=(2,3,4,5,6), out_col_prefix="tmp_k"):
+    """Quick helper to choose k by silhouette (higher is better)."""
+    rows = []
+    for k in ks:
+        df_k, _, sil = fit_kmeans_numeric(df_in, feature_cols, out_col=f"{out_col_prefix}_{k}", k=k)
+        rows.append((k, float(sil)))
+    return spark.createDataFrame(rows, ["k", "silhouette"]).orderBy(F.desc("silhouette"))
+
+# ============================================================
+# 3) CLUSTER #1 — Timeline shape (cycle times)
+#    Uses: ct_a2_to_b_days, ct_b_to_c_days, ct_c_to_d_days, ct_d_to_e_days
+#    Best when sequence is clean.
+# ============================================================
+timeline_cols = ["ct_a2_to_b_days", "ct_b_to_c_days", "ct_c_to_d_days", "ct_d_to_e_days"]
+require_cols(df0, ["benchmark_eligible", "is_sequence_full"] + timeline_cols)
+
+df_timeline = (
+    df0.filter((F.col("benchmark_eligible") == 1) & (F.col("is_sequence_full") == 1))
 )
 
-# B) Median (P50) cycle days per transition, split by group
-grouped_bar_from_spark(
-    cycle_stats.select("transition","category_clean",F.col("p50_days").cast("double").alias("p50_days")),
-    index_col="transition",
-    series_col="category_clean",
-    value_col="p50_days",
-    title="Median Cycle Time (P50 days) by Transition — OPPM vs P6",
-    xlabel="Transition",
-    ylabel="Days"
+# (Optional) choose k quickly
+# display(pick_k_by_silhouette(df_timeline, timeline_cols, ks=(2,3,4,5,6), out_col_prefix="k_timeline"))
+
+df_timeline_clustered, timeline_model, timeline_sil = fit_kmeans_numeric(
+    df_timeline,
+    feature_cols=timeline_cols,
+    out_col="cluster_timeline",
+    k=4
 )
 
-# C) Risk score: % of P6 worse than OPPM P80 (per transition)
-pdf = p6_risk.select("transition","p6_pct_worse_than_oppm_p80").toPandas()
-plt.figure(figsize=(10,4))
-plt.bar(pdf["transition"], pdf["p6_pct_worse_than_oppm_p80"])
-plt.title("% of P6 Projects Slower Than OPPM P80 (Risk Score)")
-plt.xlabel("Transition")
-plt.ylabel("% of P6 > OPPM P80")
-plt.xticks(rotation=0)
-plt.tight_layout()
-plt.show()
-
-# D) Overdue burden: overdue-days per 100 projects, split by group
-grouped_bar_from_spark(
-    overdue_burden.select("gate","category_clean","overdue_days_per_100_projects"),
-    index_col="gate",
-    series_col="category_clean",
-    value_col="overdue_days_per_100_projects",
-    title="Overdue Burden (Total Overdue Days per 100 Projects) by Gate — OPPM vs P6",
-    xlabel="Gate",
-    ylabel="Overdue days per 100 projects"
+print("Timeline clustering silhouette:", timeline_sil)
+display(df_timeline_clustered.groupBy("cluster_timeline").count().orderBy(F.desc("count")))
+display(
+    df_timeline_clustered.groupBy("cluster_timeline")
+    .agg(*[F.round(F.avg(c), 1).alias(f"avg_{c}") for c in timeline_cols])
+    .orderBy("cluster_timeline")
 )
+
+# ============================================================
+# 4) CLUSTER #2 — Timeliness behaviour (planning vs execution)
+#    Create per-project numeric features:
+#      counts of flags + mean delay on available gates
+# ============================================================
+gates = ["A2","B","C","D","E"]
+flag_cols  = [f"{g}_timeliness_flag" for g in gates]
+delay_cols = [f"{g}_delay_days_actual_minus_planned" for g in gates]
+
+require_cols(df0, ["benchmark_eligible", "is_sequence_full"] + flag_cols + delay_cols)
+
+df_beh = (
+    df0.filter((F.col("benchmark_eligible") == 1) & (F.col("is_sequence_full") == 1))
+)
+
+# Build counts from flags
+def count_flag(flag):
+    return sum(F.when(F.upper(F.col(c).cast("string")) == flag, 1).otherwise(0) for c in flag_cols)
+
+df_beh = (
+    df_beh
+    .withColumn("cnt_late",     count_flag("LATE"))
+    .withColumn("cnt_overdue",  count_flag("OVERDUE"))
+    .withColumn("cnt_on_time",  count_flag("ON_TIME"))
+    .withColumn("cnt_early",    count_flag("EARLY"))
+    .withColumn("cnt_upcoming", count_flag("UPCOMING"))
+    .withColumn("cnt_no_plan",  count_flag("NO_PLAN"))
+)
+
+# Mean delay over available (non-null) delay values
+delay_sum = sum(F.coalesce(F.col(c).cast("double"), F.lit(0.0)) for c in delay_cols)
+delay_n   = sum(F.when(F.col(c).isNotNull(), 1).otherwise(0) for c in delay_cols)
+
+df_beh = df_beh.withColumn("avg_delay_days", F.when(delay_n > 0, delay_sum / delay_n).otherwise(F.lit(None).cast("double")))
+df_beh = df_beh.withColumn("max_delay_days", F.greatest(*[F.coalesce(F.col(c).cast("double"), F.lit(float("-inf"))) for c in delay_cols]))
+
+beh_cols = ["cnt_late","cnt_overdue","cnt_on_time","cnt_early","cnt_upcoming","cnt_no_plan","avg_delay_days","max_delay_days"]
+
+# (Optional) choose k quickly
+# display(pick_k_by_silhouette(df_beh, beh_cols, ks=(2,3,4,5,6), out_col_prefix="k_beh"))
+
+df_beh_clustered, beh_model, beh_sil = fit_kmeans_numeric(
+    df_beh,
+    feature_cols=beh_cols,
+    out_col="cluster_timeliness",
+    k=4
+)
+
+print("Timeliness-behaviour clustering silhouette:", beh_sil)
+display(df_beh_clustered.groupBy("cluster_timeliness").count().orderBy(F.desc("count")))
+display(
+    df_beh_clustered.groupBy("cluster_timeliness")
+    .agg(*[F.round(F.avg(c), 2).alias(f"avg_{c}") for c in beh_cols])
+    .orderBy("cluster_timeliness")
+)
+
+# ============================================================
+# 5) CLUSTER #3 — Data quality / anomaly clustering
+#    Uses your quality flags & anomaly indicators
+# ============================================================
+quality_cols = [
+    "gate_dates_present_cnt",
+    "sequence_breaks",
+    "consecutive_zero_cnt",
+    "all_gates_same_date",
+    "zero_a2_b","zero_b_c","zero_c_d","zero_d_e",
+    "is_sequence_strict",
+    "is_sequence_full"
+]
+require_cols(df0, quality_cols)
+
+# For anomaly clustering, DON'T filter too aggressively — you want the weird ones too.
+df_quality = df0
+
+# Ensure everything numeric
+df_quality = (
+    df_quality
+    .withColumn("all_gates_same_date", F.col("all_gates_same_date").cast("int"))
+    .withColumn("is_sequence_strict",  F.col("is_sequence_strict").cast("int"))
+    .withColumn("is_sequence_full",    F.col("is_sequence_full").cast("int"))
+)
+
+# (Optional) choose k quickly
+# display(pick_k_by_silhouette(df_quality, quality_cols, ks=(2,3,4,5,6), out_col_prefix="k_qual"))
+
+df_quality_clustered, qual_model, qual_sil = fit_kmeans_numeric(
+    df_quality,
+    feature_cols=quality_cols,
+    out_col="cluster_quality",
+    k=4,
+    filter_nulls=True
+)
+
+print("Quality/anomaly clustering silhouette:", qual_sil)
+display(df_quality_clustered.groupBy("cluster_quality").count().orderBy(F.desc("count")))
+display(
+    df_quality_clustered.groupBy("cluster_quality")
+    .agg(*[F.round(F.avg(c), 2).alias(f"avg_{c}") for c in quality_cols])
+    .orderBy("cluster_quality")
+)
+
+# ============================================================
+# 6) CLUSTER #4 — Portfolio segmentation (mixed categorical + numeric)
+#    Categories: region, Investment Type, Project Type, Delivery Unit
+#    Plus numeric behaviours (small set): avg_delay_days, cnt_overdue, cnt_no_plan
+# ============================================================
+cat_cols = ["region", "Investment Type", "Project Type", "Delivery Unit"]
+num_cols = ["avg_delay_days", "cnt_overdue", "cnt_no_plan"]
+
+# Build from df_beh (already has numeric behaviour columns)
+df_port = df_beh  # already filtered to benchmark_eligible & is_sequence_full
+
+require_cols(df_port, cat_cols + num_cols)
+
+# Clean category columns
+for c in cat_cols:
+    df_port = df_port.withColumn(c, F.when(F.trim(F.col(c).cast("string")) == "", F.lit("Unknown"))
+                                   .otherwise(F.coalesce(F.trim(F.col(c).cast("string")), F.lit("Unknown"))))
+
+# Index + OneHotEncode categorical cols
+indexers = [StringIndexer(inputCol=c, outputCol=f"{c}_idx", handleInvalid="keep") for c in cat_cols]
+encoder  = OneHotEncoder(inputCols=[f"{c}_idx" for c in cat_cols],
+                         outputCols=[f"{c}_ohe" for c in cat_cols],
+                         handleInvalid="keep")
+
+# Assemble numeric + ohe
+assembler = VectorAssembler(
+    inputCols=num_cols + [f"{c}_ohe" for c in cat_cols],
+    outputCol="__vec_port"
+)
+
+scaler = StandardScaler(inputCol="__vec_port", outputCol="__scaled_port", withMean=True, withStd=True)
+kmeans = KMeans(featuresCol="__scaled_port", predictionCol="cluster_portfolio", k=5, seed=42)
+
+pipe = Pipeline(stages=indexers + [encoder, assembler, scaler, kmeans])
+port_model = pipe.fit(df_port)
+df_port_clustered = port_model.transform(df_port)
+
+evaluator = ClusteringEvaluator(featuresCol="__scaled_port", predictionCol="cluster_portfolio", metricName="silhouette")
+port_sil = evaluator.evaluate(df_port_clustered)
+
+print("Portfolio segmentation silhouette:", port_sil)
+display(df_port_clustered.groupBy("cluster_portfolio").count().orderBy(F.desc("count")))
+
+# Simple cluster profiling: dominant categories + numeric averages
+display(
+    df_port_clustered.groupBy("cluster_portfolio")
+    .agg(
+        F.round(F.avg("avg_delay_days"), 2).alias("avg_avg_delay_days"),
+        F.round(F.avg("cnt_overdue"), 2).alias("avg_cnt_overdue"),
+        F.round(F.avg("cnt_no_plan"), 2).alias("avg_cnt_no_plan"),
+        F.expr("percentile_approx(avg_delay_days, 0.5)").alias("p50_avg_delay_days")
+    )
+    .orderBy("cluster_portfolio")
+)
+
+# For dominant category values per cluster (quick view), run a few top-value counts:
+for c in cat_cols:
+    print(f"Top {c} per cluster:")
+    display(
+        df_port_clustered.groupBy("cluster_portfolio", c).count()
+        .orderBy("cluster_portfolio", F.desc("count"))
+        .limit(50)
+    )
+
+# ============================================================
+# 7) Optional: join cluster labels back
+
