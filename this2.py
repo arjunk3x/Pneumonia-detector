@@ -252,3 +252,162 @@ display(df_clusters.groupBy("category_clean", "cluster_timeline").count().orderB
 display(df_clusters.groupBy("category_clean", "cluster_timeliness").count().orderBy("category_clean", "cluster_timeliness"))
 display(df_clusters.groupBy("category_clean", "cluster_quality").count().orderBy("category_clean", "cluster_quality"))
 display(df_clusters.groupBy("category_clean", "cluster_portfolio").count().orderBy("category_clean", "cluster_portfolio"))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+import matplotlib.pyplot as plt
+from pyspark.sql import functions as F
+
+# -----------------------------
+# Helper 1: Cluster sizes bar
+# -----------------------------
+def plot_cluster_sizes(df_clustered, cluster_col, title):
+    sizes = (df_clustered.groupBy(cluster_col).count().orderBy(cluster_col).toPandas())
+    plt.figure(figsize=(8, 4))
+    plt.bar(sizes[cluster_col].astype(str), sizes["count"])
+    plt.xlabel("Cluster")
+    plt.ylabel("Number of projects")
+    plt.title(title)
+    plt.tight_layout()
+    plt.show()
+    display(df_clustered.groupBy(cluster_col).count().orderBy(F.desc("count")))
+
+# -----------------------------
+# Helper 2: Cluster profile (mean per feature) as grouped bars
+# -----------------------------
+def plot_cluster_profile(df_clustered, cluster_col, feature_cols, title):
+    prof = (
+        df_clustered.groupBy(cluster_col)
+        .agg(*[F.avg(F.col(c).cast("double")).alias(c) for c in feature_cols])
+        .orderBy(cluster_col)
+        .toPandas()
+    )
+
+    # plot each cluster as a separate bar group per feature
+    x = range(len(feature_cols))
+    plt.figure(figsize=(12, 4))
+    for _, row in prof.iterrows():
+        plt.plot(feature_cols, [row[c] for c in feature_cols], marker="o", label=f"Cluster {int(row[cluster_col])}")
+
+    plt.xticks(rotation=45, ha="right")
+    plt.ylabel("Average value")
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    display(df_clustered.groupBy(cluster_col).agg(*[F.round(F.avg(c),2).alias(f"avg_{c}") for c in feature_cols]).orderBy(cluster_col))
+
+# -----------------------------
+# Helper 3: Category mix per cluster (OPPM vs P6) as % stacked bar
+# -----------------------------
+def plot_category_mix(df_clustered, cluster_col, category_col="category_clean", title="Category mix"):
+    mix = (
+        df_clustered.groupBy(cluster_col, category_col).count()
+        .groupBy(cluster_col)
+        .pivot(category_col)
+        .sum("count")
+        .na.fill(0)
+        .orderBy(cluster_col)
+        .toPandas()
+    )
+
+    # convert to percentages per cluster
+    cats = [c for c in mix.columns if c != cluster_col]
+    mix["total"] = mix[cats].sum(axis=1)
+    for c in cats:
+        mix[c] = (mix[c] / mix["total"]).fillna(0)
+
+    plt.figure(figsize=(8, 4))
+    bottom = None
+    x = mix[cluster_col].astype(str)
+
+    for c in cats:
+        if bottom is None:
+            plt.bar(x, mix[c], label=c)
+            bottom = mix[c].values
+        else:
+            plt.bar(x, mix[c], bottom=bottom, label=c)
+            bottom = bottom + mix[c].values
+
+    plt.xlabel("Cluster")
+    plt.ylabel("Share of projects")
+    plt.title(title)
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+    display(mix)
+
+# -----------------------------
+# VISUAL 1: Timeline clusters
+# -----------------------------
+plot_cluster_sizes(df_timeline_clustered, "cluster_timeline", f"Cluster sizes — Timeline (silhouette={sil_timeline:.3f})")
+plot_cluster_profile(df_timeline_clustered, "cluster_timeline", timeline_cols, "Timeline cluster profiles (avg cycle days per transition)")
+plot_category_mix(df_timeline_clustered, "cluster_timeline", title="OPPM vs P6 mix by Timeline cluster")
+
+# Extra: "centroid shape" chart (avg cycle per transition per cluster) as line plot
+timeline_means = (
+    df_timeline_clustered.groupBy("cluster_timeline")
+    .agg(*[F.avg(c).alias(c) for c in timeline_cols])
+    .orderBy("cluster_timeline")
+    .toPandas()
+)
+plt.figure(figsize=(10, 4))
+for _, r in timeline_means.iterrows():
+    plt.plot(timeline_cols, [r[c] for c in timeline_cols], marker="o", label=f"Cluster {int(r['cluster_timeline'])}")
+plt.xticks(rotation=45, ha="right")
+plt.ylabel("Avg days")
+plt.title("Timeline clusters — average cycle-time shape")
+plt.legend()
+plt.tight_layout()
+plt.show()
+
+# -----------------------------
+# VISUAL 2: Timeliness clusters
+# -----------------------------
+plot_cluster_sizes(df_beh_clustered, "cluster_timeliness", f"Cluster sizes — Timeliness (silhouette={sil_beh:.3f})")
+plot_cluster_profile(df_beh_clustered, "cluster_timeliness", beh_cols, "Timeliness cluster profiles (avg counts + avg/max delay)")
+plot_category_mix(df_beh_clustered, "cluster_timeliness", title="OPPM vs P6 mix by Timeliness cluster")
+
+# -----------------------------
+# VISUAL 3: Data-quality clusters
+# -----------------------------
+plot_cluster_sizes(df_quality_clustered, "cluster_quality", f"Cluster sizes — Data Quality (silhouette={sil_quality:.3f})")
+plot_cluster_profile(df_quality_clustered, "cluster_quality", quality_cols, "Quality cluster profiles (avg flags)")
+plot_category_mix(df_quality_clustered, "cluster_quality", title="OPPM vs P6 mix by Quality cluster")
+
+# -----------------------------
+# VISUAL 4: Portfolio clusters (mixed categorical + numeric)
+# For portfolio we mainly look at sizes + category mix (profiles are high-dim due to one-hot)
+# -----------------------------
+plot_cluster_sizes(df_port_clustered, "cluster_portfolio", f"Cluster sizes — Portfolio (silhouette={sil_port:.3f})")
+plot_category_mix(df_port_clustered, "cluster_portfolio", title="OPPM vs P6 mix by Portfolio cluster")
+
+
