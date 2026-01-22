@@ -1,340 +1,310 @@
-from pyspark.sql import functions as F, types as T
-import matplotlib.pyplot as plt
-import numpy as np
+# =========================
+# Rate-based + time-based metrics for OPPM vs P6 (size-agnostic)
+# Uses: df (your main dataframe) with "category" (OPPM/P6) + gate decision dates
+# Assumes you already have: benchmark_eligible, is_sequence_full
+# =========================
 
-# =========================
-# 0) Base filters (as you requested)
-# =========================
+from pyspark.sql import functions as F
+
+# -------------------------
+# 0) Column name helpers
+# -------------------------
+def pick_existing_col(df, *candidates):
+    """Return the first column name that exists in df.columns."""
+    for c in candidates:
+        if c in df.columns:
+            return c
+    raise ValueError(f"None of these columns exist: {candidates}")
+
+project_id_col = pick_existing_col(df, "Project ID", "ProjectID", "project_id")
+category_col   = pick_existing_col(df, "category", "Category")
+
+# Clean category -> force to "OPPM"/"P6" for stable grouping
+df = df.withColumn(
+    "category_clean",
+    F.when(F.lower(F.col(category_col)).like("%p6%"),   F.lit("P6"))
+     .when(F.lower(F.col(category_col)).like("%oppm%"), F.lit("OPPM"))
+     .otherwise(F.col(category_col))
+)
+
+# Your strict filters to avoid noise/bad rows
 df_analysis = (
-    df
-    .filter((F.col("benchmark_eligible") == 1) & (F.col("is_sequence_full") == 1))
-    .withColumn("category_clean", F.upper(F.trim(F.col("category").cast("string"))))
+    df.filter((F.col("benchmark_eligible") == 1) & (F.col("is_sequence_full") == 1))
 )
 
-# Keep only OPPM and P6 if needed
-df_analysis = df_analysis.filter(F.col("category_clean").isin("OPPM", "P6"))
+analysis_date = F.current_date()  # or replace with F.to_date(F.lit("2026-01-22"))
 
-analysis_date = F.current_date()
-
-# =========================
-# Helper: ensure planned "Approval Date" exists (parse Approval Value -> Approval Date if needed)
-# =========================
+# -------------------------
+# 1) Gate plan/decision mapping (planned = "Approval Value" -> parsed date)
+#    If you already created "Gate X Approval Date" columns, we will use them.
+# -------------------------
 gate_map = [
-    ("A2", "Gate A2 Decision Date", "Gate A2 Approval Value", "Gate A2 Approval Date"),
-    ("B",  "Gate B Decision Date",  "Gate B Approval Value",  "Gate B Approval Date"),
-    ("C",  "Gate C Decision Date",  "Gate C Approval Value",  "Gate C Approval Date"),
-    ("D",  "Gate D Decision Date",  "Gate D Approval Value",  "Gate D Approval Date"),
-    ("E",  "Gate E Decision Date",  "Gate E Approval Value",  "Gate E Approval Date"),
+    # gate, decision date column, preferred planned date col, fallback raw planned col in your dataset
+    ("A2", "Gate A2 Decision Date", "Gate A2 Approval Date", "Gate A2 Approval Value"),
+    ("B",  "Gate B Decision Date",  "Gate B Approval Date",  "Gate B Approval Value Sanction"),
+    ("C",  "Gate C Decision Date",  "Gate C Approval Date",  "Gate C Approval Value FSA ACL"),
+    ("D",  "Gate D Decision Date",  "Gate D Approval Date",  "Gate D Approval Value"),
+    ("E",  "Gate E Decision Date",  "Gate E Approval Date",  "Gate E Approval Value"),
 ]
 
-def parse_date_spark(colname: str):
-    c = F.trim(F.col(colname).cast("string"))
-    c = F.when((c == "") | c.isNull(), F.lit(None)).otherwise(c)
-    return F.coalesce(
-        F.to_date(c, "yyyy-MM-dd"),
-        F.to_date(c, "yyyy/MM/dd"),
-        F.to_date(c, "dd/MM/yyyy"),
-        F.to_date(c, "MM/dd/yyyy"),
-        F.to_date(c, "dd-MM-yyyy"),
-        F.to_date(c, "MM-dd-yyyy"),
-        F.to_date(c, "dd-MMM-yyyy"),
-        F.to_date(c, "dd-MMM-yy"),
-        F.to_date(c, "MMM dd, yyyy"),
-        F.to_date(F.to_timestamp(c))
+# If any "Gate X Approval Date" is missing, parse from the raw Approval Value into that date column
+def parse_plan_date(df_in, gate, preferred_plan_col, fallback_raw_col):
+    if preferred_plan_col in df_in.columns:
+        return df_in
+    if fallback_raw_col not in df_in.columns:
+        raise ValueError(f"Missing both planned date columns for Gate {gate}: {preferred_plan_col}, {fallback_raw_col}")
+
+    raw = F.trim(F.col(fallback_raw_col).cast("string"))
+    raw = F.when((raw == "") | raw.isNull(), F.lit(None)).otherwise(raw)
+
+    # Try common formats (extend if needed)
+    plan = F.coalesce(
+        F.to_date(raw, "yyyy-MM-dd"),
+        F.to_date(raw, "yyyy/MM/dd"),
+        F.to_date(raw, "dd/MM/yyyy"),
+        F.to_date(raw, "MM/dd/yyyy"),
+        F.to_date(raw, "dd-MM-yyyy"),
+        F.to_date(raw, "MM-dd-yyyy"),
+        F.to_date(raw, "dd-MMM-yyyy"),
+        F.to_date(raw, "dd-MMM-yy"),
+        F.to_date(F.to_timestamp(raw))
     )
 
-# Create Approval Date columns if they don't already exist
-existing_cols = set(df_analysis.columns)
-for g, dcol, aval_col, adate_col in gate_map:
-    if adate_col not in existing_cols and aval_col in existing_cols:
-        df_analysis = df_analysis.withColumn(adate_col, parse_date_spark(aval_col))
+    return df_in.withColumn(preferred_plan_col, plan)
 
-# =========================
-# Helper: build timeliness flag + delay days (Actual - Planned)
-# =========================
-# Flag values: NO_PLAN, EARLY, ON_TIME, LATE, OVERDUE, UPCOMING
-for g, dcol, aval_col, adate_col in gate_map:
-    planned = F.col(adate_col)
-    actual  = F.col(dcol)
+for gate, dcol, pcol, rawp in gate_map:
+    df_analysis = parse_plan_date(df_analysis, gate, pcol, rawp)
 
-    # Delay days: Actual - Planned (only when both exist)
-    df_analysis = df_analysis.withColumn(
-        f"{g}_delay_days_actual_minus_planned",
-        F.when(planned.isNotNull() & actual.isNotNull(),
-               F.datediff(actual, planned).cast("int")
-        ).otherwise(F.lit(None).cast("int"))
-    )
+# -------------------------
+# 2) Build per-gate timeliness flag + delay days (Actual - Planned)
+#    EARLY/ON_TIME/LATE: plan+decision present
+#    OVERDUE/UPCOMING: plan present, decision missing
+#    NO_PLAN: plan missing
+# -------------------------
+for gate, dcol, pcol, _ in gate_map:
+    decision = F.col(dcol)
+    plan     = F.col(pcol)
 
-    # Timeliness flag
-    df_analysis = df_analysis.withColumn(
-        f"{g}_timeliness_flag",
-        F.when(planned.isNull(), F.lit("NO_PLAN"))
-         .when(actual.isNotNull() & (actual < planned), F.lit("EARLY"))
-         .when(actual.isNotNull() & (actual == planned), F.lit("ON_TIME"))
-         .when(actual.isNotNull() & (actual > planned), F.lit("LATE"))
-         .when(actual.isNull() & (analysis_date > planned), F.lit("OVERDUE"))
-         .otherwise(F.lit("UPCOMING"))
-    )
-
-# =========================
-# 2) BOTTLENECK ANALYSIS
-# =========================
-# Needs cycle time columns (computed earlier). If your names differ, change here.
-transitions = [
-    ("A2→B", "ct_a2_to_b_days"),
-    ("B→C",  "ct_b_to_c_days"),
-    ("C→D",  "ct_c_to_d_days"),
-    ("D→E",  "ct_d_to_e_days"),
-]
-
-# Slowest transition per project = max of available cycle times
-arr = F.array(*[
-    F.struct(F.lit(tname).alias("transition"), F.col(ctcol).cast("double").alias("days"))
-    for tname, ctcol in transitions
-])
-
-df_bottleneck = (
-    df_analysis
-    .withColumn("transition_days_arr", arr)
-    .withColumn("transition_days_arr", F.expr("filter(transition_days_arr, x -> x.days is not null and x.days >= 0)"))
-    .withColumn(
-        "slowest_struct",
-        F.expr("""
-          aggregate(
-            transition_days_arr,
-            cast(null as struct<transition:string,days:double>),
-            (acc, x) -> case
-                          when acc is null then x
-                          when x.days > acc.days then x
-                          else acc
-                        end
-          )
-        """)
-    )
-    .withColumn("slowest_transition", F.col("slowest_struct.transition"))
-    .withColumn("slowest_days", F.col("slowest_struct.days"))
-)
-
-bottleneck_counts = (
-    df_bottleneck
-    .filter(F.col("slowest_transition").isNotNull())
-    .groupBy("category_clean", "slowest_transition")
-    .agg(F.count("*").alias("n_projects"))
-)
-
-display(bottleneck_counts.orderBy("category_clean", F.desc("n_projects")))
-
-# --- Heatmap: Category × Slowest transition (counts)
-pdf_heat = (
-    bottleneck_counts
-    .groupBy("category_clean")
-    .pivot("slowest_transition", [t[0] for t in transitions])
-    .agg(F.first("n_projects"))
-    .fillna(0)
-    .toPandas()
-    .set_index("category_clean")
-)
-
-mat = pdf_heat.values.astype(float)
-fig, ax = plt.subplots(figsize=(8, 3))
-im = ax.imshow(mat, aspect="auto")  # default colormap
-ax.set_xticks(np.arange(len(pdf_heat.columns)))
-ax.set_xticklabels(pdf_heat.columns)
-ax.set_yticks(np.arange(len(pdf_heat.index)))
-ax.set_yticklabels(pdf_heat.index)
-ax.set_title("Bottleneck heatmap: Category × Slowest transition (count)")
-for i in range(mat.shape[0]):
-    for j in range(mat.shape[1]):
-        ax.text(j, i, f"{int(mat[i,j])}", ha="center", va="center", fontsize=9)
-fig.colorbar(im, ax=ax, fraction=0.03, pad=0.02, label="Projects")
-plt.tight_layout()
-plt.show()
-
-# --- Stacked bar: Most common bottleneck transition (share within each category)
-pdf_stack = pdf_heat.copy()
-pdf_stack_pct = pdf_stack.div(pdf_stack.sum(axis=1), axis=0).fillna(0)
-
-ax = pdf_stack_pct.plot(kind="bar", stacked=True, figsize=(9, 4))
-ax.set_title("Most common bottleneck transition (share within category)")
-ax.set_xlabel("Category")
-ax.set_ylabel("Share of projects")
-plt.tight_layout()
-plt.show()
-
-# =========================
-# 3) TIMELINESS VS PLAN (Actual vs Planned)
-# =========================
-# Long-format of gate flags
-gate_order = ["A2", "B", "C", "D", "E"]
-flag_cols = {g: f"{g}_timeliness_flag" for g in gate_order}
-delay_cols = {g: f"{g}_delay_days_actual_minus_planned" for g in gate_order}
-
-stack_flags = "stack(5, " + ", ".join([f"'{g}', `{flag_cols[g]}`" for g in gate_order]) + ") as (gate, flag)"
-stack_delays = "stack(5, " + ", ".join([f"'{g}', `{delay_cols[g]}`" for g in gate_order]) + ") as (gate, delay_days)"
-
-df_flags_long = (
-    df_analysis
-    .select("category_clean", F.expr(stack_flags))
-    .withColumn("flag", F.coalesce(F.col("flag"), F.lit("NO_PLAN")))
-)
-
-flag_counts = (
-    df_flags_long
-    .groupBy("category_clean", "gate", "flag")
-    .agg(F.count("*").alias("n"))
-)
-
-display(flag_counts.orderBy("gate", "category_clean", F.desc("n")))
-
-# --- Stacked bar per gate (2 bars: OPPM vs P6, stacked by flags)
-flag_order = ["EARLY", "ON_TIME", "LATE", "OVERDUE", "UPCOMING", "NO_PLAN"]
-
-for g in gate_order:
-    pdf = (
-        flag_counts.filter(F.col("gate") == g)
-        .groupBy("category_clean")
-        .pivot("flag", flag_order)
-        .agg(F.first("n"))
-        .fillna(0)
-        .toPandas()
-        .set_index("category_clean")
-    )
-    ax = pdf.plot(kind="bar", stacked=True, figsize=(9, 4))
-    ax.set_title(f"Timeliness split for Gate {g} (OPPM vs P6)")
-    ax.set_xlabel("Category")
-    ax.set_ylabel("Count of projects")
-    plt.tight_layout()
-    plt.show()
-
-# --- Median + P80 delay bars per gate split by category (using delay_days where both exist)
-df_delays_long = (
-    df_analysis
-    .select("category_clean", F.expr(stack_delays))
-    .filter(F.col("delay_days").isNotNull())
-    .withColumn("delay_days", F.col("delay_days").cast("double"))
-)
-
-delay_stats = (
-    df_delays_long
-    .groupBy("category_clean", "gate")
-    .agg(
-        F.count("*").alias("n"),
-        F.expr("percentile_approx(delay_days, 0.5)").alias("median_delay"),
-        F.expr("percentile_approx(delay_days, 0.8)").alias("p80_delay"),
-    )
-)
-
-display(delay_stats.orderBy("gate", "category_clean"))
-
-pdf_med = (
-    delay_stats
-    .select("category_clean", "gate", "median_delay")
-    .groupBy("gate")
-    .pivot("category_clean", ["OPPM", "P6"])
-    .agg(F.first("median_delay"))
-    .toPandas()
-    .set_index("gate")
-    .reindex(gate_order)
-)
-
-ax = pdf_med.plot(kind="bar", figsize=(9, 4))
-ax.set_title("Median delay days (Actual − Planned) per gate, split by category")
-ax.set_xlabel("Gate")
-ax.set_ylabel("Median delay (days)")
-plt.tight_layout()
-plt.show()
-
-pdf_p80 = (
-    delay_stats
-    .select("category_clean", "gate", "p80_delay")
-    .groupBy("gate")
-    .pivot("category_clean", ["OPPM", "P6"])
-    .agg(F.first("p80_delay"))
-    .toPandas()
-    .set_index("gate")
-    .reindex(gate_order)
-)
-
-ax = pdf_p80.plot(kind="bar", figsize=(9, 4))
-ax.set_title("P80 delay days (Actual − Planned) per gate, split by category")
-ax.set_xlabel("Gate")
-ax.set_ylabel("P80 delay (days)")
-plt.tight_layout()
-plt.show()
-
-# --- Overdue backlog bars per gate split by category
-overdue_counts = (
-    df_flags_long
-    .filter(F.col("flag") == "OVERDUE")
-    .groupBy("category_clean", "gate")
-    .agg(F.count("*").alias("overdue_count"))
-)
-
-display(overdue_counts.orderBy("gate", "category_clean"))
-
-pdf_overdue = (
-    overdue_counts
-    .groupBy("gate")
-    .pivot("category_clean", ["OPPM", "P6"])
-    .agg(F.first("overdue_count"))
-    .fillna(0)
-    .toPandas()
-    .set_index("gate")
-    .reindex(gate_order)
-)
-
-ax = pdf_overdue.plot(kind="bar", figsize=(9, 4))
-ax.set_title("Overdue backlog count per gate (planned passed, decision missing)")
-ax.set_xlabel("Gate")
-ax.set_ylabel("Overdue count")
-plt.tight_layout()
-plt.show()
-
-# =========================
-# 4) BACKLOG ANALYSIS (definition-based, not flag-based)
-# planned date passed AND decision missing
-# =========================
-backlog_rows = []
-for g, dcol, aval_col, adate_col in gate_map:
-    backlog_rows.append(
-        df_analysis.select(
-            "category_clean",
-            F.lit(g).alias("gate"),
-            F.col(adate_col).alias("planned_date"),
-            F.col(dcol).alias("decision_date")
+    df_analysis = (
+        df_analysis
+        .withColumn(
+            f"{gate}_delay_days_actual_minus_planned",
+            F.when(plan.isNotNull() & decision.isNotNull(), F.datediff(decision, plan)).otherwise(F.lit(None).cast("int"))
+        )
+        .withColumn(
+            f"{gate}_timeliness_flag",
+            F.when(plan.isNull(), F.lit("NO_PLAN"))
+             .when(decision.isNotNull() & (decision < plan),  F.lit("EARLY"))
+             .when(decision.isNotNull() & (decision == plan), F.lit("ON_TIME"))
+             .when(decision.isNotNull() & (decision > plan),  F.lit("LATE"))
+             .when(decision.isNull() & (analysis_date > plan), F.lit("OVERDUE"))
+             .otherwise(F.lit("UPCOMING"))
         )
     )
 
-df_backlog_long = backlog_rows[0]
-for tmp in backlog_rows[1:]:
-    df_backlog_long = df_backlog_long.unionByName(tmp)
+# -------------------------
+# 3) (1) Percentages/rates, not counts
+#    a) Scorecard split: % of total projects by status (per gate x group)
+#    b) % Late out of "decided + planned" only (fair execution metric)
+# -------------------------
+# Total projects per group (denominator for % of total)
+df_totals = df_analysis.groupBy("category_clean").agg(F.countDistinct(project_id_col).alias("total_projects"))
 
-df_backlog_overdue = (
-    df_backlog_long
-    .filter(F.col("planned_date").isNotNull())
-    .filter(F.col("decision_date").isNull())
-    .filter(F.col("planned_date") < analysis_date)
+# Long-form timeliness records: (category, gate, flag)
+timeliness_long = None
+for gate, _, _, _ in gate_map:
+    tmp = df_analysis.select(
+        "category_clean",
+        F.lit(gate).alias("gate"),
+        F.col(f"{gate}_timeliness_flag").alias("flag"),
+    )
+    timeliness_long = tmp if timeliness_long is None else timeliness_long.unionByName(tmp)
+
+# a) Scorecard: % of total projects by timeliness state
+gate_scorecard = (
+    timeliness_long
+    .groupBy("category_clean", "gate", "flag")
+    .agg(F.count("*").alias("n"))
+    .join(df_totals, on="category_clean", how="left")
+    .withColumn("pct_of_total", F.round(F.col("n") * 100.0 / F.col("total_projects"), 2))
+    .orderBy("gate", "category_clean", "flag")
+)
+
+display(gate_scorecard)
+
+# b) % Late among decided+planned only (EARLY/ON_TIME/LATE denom)
+late_rate = (
+    timeliness_long
+    .filter(F.col("flag").isin(["EARLY", "ON_TIME", "LATE"]))
     .groupBy("category_clean", "gate")
-    .agg(F.count("*").alias("overdue_backlog_count"))
+    .agg(
+        F.count("*").alias("n_decided_planned"),
+        F.sum(F.when(F.col("flag") == "LATE", 1).otherwise(0)).alias("n_late")
+    )
+    .withColumn("pct_late", F.round(F.col("n_late") * 100.0 / F.col("n_decided_planned"), 2))
+    .orderBy("gate", "category_clean")
 )
 
-display(df_backlog_overdue.orderBy("gate", "category_clean"))
+display(late_rate)
 
-pdf_backlog = (
-    df_backlog_overdue
-    .groupBy("gate")
-    .pivot("category_clean", ["OPPM", "P6"])
-    .agg(F.first("overdue_backlog_count"))
-    .fillna(0)
-    .toPandas()
-    .set_index("gate")
-    .reindex(gate_order)
+# -------------------------
+# 4) (2) Cycle-time percentiles per transition (P50/P80) – not averages
+# -------------------------
+transitions = [
+    ("A2→B", "seq_a2_b_status", "ct_a2_to_b_days"),
+    ("B→C",  "seq_b_c_status",  "ct_b_to_c_days"),
+    ("C→D",  "seq_c_d_status",  "ct_c_to_d_days"),
+    ("D→E",  "seq_d_e_status",  "ct_d_to_e_days"),
+]
+
+# Long-form transitions (category, transition, cycle_days)
+cycle_long = None
+for tname, status_col, ct_col in transitions:
+    tmp = (
+        df_analysis
+        .filter(F.col(status_col) == "OK")
+        .select(
+            "category_clean",
+            F.lit(tname).alias("transition"),
+            F.col(ct_col).cast("double").alias("cycle_days")
+        )
+        .filter(F.col("cycle_days").isNotNull() & (F.col("cycle_days") >= 0))
+    )
+    cycle_long = tmp if cycle_long is None else cycle_long.unionByName(tmp)
+
+cycle_stats = (
+    cycle_long
+    .groupBy("category_clean", "transition")
+    .agg(
+        F.count("*").alias("n"),
+        F.expr("percentile_approx(cycle_days, 0.5)").alias("p50_days"),
+        F.expr("percentile_approx(cycle_days, 0.8)").alias("p80_days"),
+        F.round(F.avg("cycle_days"), 1).alias("mean_days")
+    )
+    .orderBy("transition", "category_clean")
 )
 
-ax = pdf_backlog.plot(kind="bar", figsize=(9, 4))
-ax.set_title("Overdue backlog (planned passed & decision missing): Gate × Category")
-ax.set_xlabel("Gate")
-ax.set_ylabel("Overdue backlog count")
+display(cycle_stats)
+
+# -------------------------
+# 5) (3) Risk score: % of P6 worse than OPPM P80 for each transition
+# -------------------------
+oppm_p80 = (
+    cycle_stats
+    .filter(F.col("category_clean") == "OPPM")
+    .select("transition", F.col("p80_days").alias("oppm_p80_days"))
+)
+
+p6_risk = (
+    cycle_long
+    .filter(F.col("category_clean") == "P6")
+    .join(oppm_p80, on="transition", how="inner")
+    .withColumn("is_worse_than_oppm_p80", (F.col("cycle_days") > F.col("oppm_p80_days")).cast("int"))
+    .groupBy("transition")
+    .agg(
+        F.count("*").alias("p6_n"),
+        F.round(F.avg("is_worse_than_oppm_p80") * 100.0, 2).alias("p6_pct_worse_than_oppm_p80"),
+        F.first("oppm_p80_days").alias("oppm_p80_days")
+    )
+    .orderBy("transition")
+)
+
+display(p6_risk)
+
+# -------------------------
+# 6) (4) Overdue burden: total overdue-days, avg overdue-days, overdue-days per 100 projects
+# -------------------------
+overdue_long = None
+for gate, dcol, pcol, _ in gate_map:
+    decision = F.col(dcol)
+    plan     = F.col(pcol)
+
+    tmp = (
+        df_analysis
+        .select(
+            "category_clean",
+            F.lit(gate).alias("gate"),
+            F.when(decision.isNull() & plan.isNotNull() & (analysis_date > plan),
+                   F.datediff(analysis_date, plan)
+            ).otherwise(F.lit(None).cast("int")).alias("overdue_days")
+        )
+    )
+
+    overdue_long = tmp if overdue_long is None else overdue_long.unionByName(tmp)
+
+overdue_burden = (
+    overdue_long
+    .withColumn("is_overdue", F.col("overdue_days").isNotNull().cast("int"))
+    .groupBy("category_clean", "gate")
+    .agg(
+        F.sum("is_overdue").alias("overdue_projects"),
+        F.sum(F.coalesce(F.col("overdue_days"), F.lit(0))).alias("total_overdue_days"),
+        F.round(F.avg("overdue_days"), 1).alias("avg_overdue_days")  # avg across overdue-only rows (nulls ignored)
+    )
+    .join(df_totals, on="category_clean", how="left")
+    .withColumn("overdue_days_per_100_projects", F.round(F.col("total_overdue_days") * 100.0 / F.col("total_projects"), 2))
+    .withColumn("pct_projects_overdue", F.round(F.col("overdue_projects") * 100.0 / F.col("total_projects"), 2))
+    .orderBy("gate", "category_clean")
+)
+
+display(overdue_burden)
+
+# ============================================================
+# BAR CHARTS (matplotlib) — one per metric (no seaborn)
+# ============================================================
+import matplotlib.pyplot as plt
+
+def grouped_bar_from_spark(sdf, index_col, series_col, value_col, title, xlabel, ylabel):
+    pdf = sdf.select(index_col, series_col, value_col).toPandas()
+    pivot = pdf.pivot(index=index_col, columns=series_col, values=value_col).fillna(0)
+    pivot.plot(kind="bar", figsize=(10,4))
+    plt.title(title)
+    plt.xlabel(xlabel)
+    plt.ylabel(ylabel)
+    plt.xticks(rotation=0)
+    plt.tight_layout()
+    plt.show()
+
+# A) % Late (among decided+planned) per gate, split by group
+grouped_bar_from_spark(
+    late_rate,
+    index_col="gate",
+    series_col="category_clean",
+    value_col="pct_late",
+    title="% Late (out of Planned+Decided) by Gate — OPPM vs P6",
+    xlabel="Gate",
+    ylabel="% Late"
+)
+
+# B) Median (P50) cycle days per transition, split by group
+grouped_bar_from_spark(
+    cycle_stats.select("transition","category_clean",F.col("p50_days").cast("double").alias("p50_days")),
+    index_col="transition",
+    series_col="category_clean",
+    value_col="p50_days",
+    title="Median Cycle Time (P50 days) by Transition — OPPM vs P6",
+    xlabel="Transition",
+    ylabel="Days"
+)
+
+# C) Risk score: % of P6 worse than OPPM P80 (per transition)
+pdf = p6_risk.select("transition","p6_pct_worse_than_oppm_p80").toPandas()
+plt.figure(figsize=(10,4))
+plt.bar(pdf["transition"], pdf["p6_pct_worse_than_oppm_p80"])
+plt.title("% of P6 Projects Slower Than OPPM P80 (Risk Score)")
+plt.xlabel("Transition")
+plt.ylabel("% of P6 > OPPM P80")
+plt.xticks(rotation=0)
 plt.tight_layout()
 plt.show()
 
+# D) Overdue burden: overdue-days per 100 projects, split by group
+grouped_bar_from_spark(
+    overdue_burden.select("gate","category_clean","overdue_days_per_100_projects"),
+    index_col="gate",
+    series_col="category_clean",
+    value_col="overdue_days_per_100_projects",
+    title="Overdue Burden (Total Overdue Days per 100 Projects) by Gate — OPPM vs P6",
+    xlabel="Gate",
+    ylabel="Overdue days per 100 projects"
+)
