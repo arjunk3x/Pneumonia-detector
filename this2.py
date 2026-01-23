@@ -494,3 +494,108 @@ pattern_summary = (
 display(pattern_summary)
 
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from pyspark.sql import functions as F
+from pyspark.ml import Pipeline
+from pyspark.ml.feature import Imputer, VectorAssembler, StandardScaler, PCA
+from pyspark.ml.clustering import KMeans
+
+import matplotlib.pyplot as plt
+
+d1 = (df
+      .filter((F.col("benchmark_eligible")==1) & (F.col("is_sequence_full")==1))
+     )
+
+ct_cols = ["ct_a2_to_b_days","ct_b_to_c_days","ct_c_to_d_days","ct_d_to_e_days"]
+
+# 1) Convert negatives -> NULL + create missing flags
+for c in ct_cols:
+    d1 = d1.withColumn(c, F.when(F.col(c) < 0, F.lit(None)).otherwise(F.col(c).cast("double")))
+    d1 = d1.withColumn(f"{c}_missing", F.when(F.col(c).isNull(), 1.0).otherwise(0.0))
+
+feat_cols = ct_cols + [f"{c}_missing" for c in ct_cols]
+
+# 2) (Optional but recommended) cap extreme values at per-column p99 to stop 30-year outliers dominating
+#    If you want to skip capping, comment this entire block out.
+p99 = d1.select([F.expr(f"percentile_approx({c}, 0.99)").alias(c) for c in ct_cols]).collect()[0].asDict()
+for c in ct_cols:
+    cap = float(p99[c]) if p99[c] is not None else None
+    if cap is not None:
+        d1 = d1.withColumn(c, F.when(F.col(c) > cap, cap).otherwise(F.col(c)))
+
+# 3) Impute numeric nulls with median (Spark Imputer uses approx median if strategy="median")
+imputer = Imputer(inputCols=feat_cols, outputCols=[f"{c}_imp" for c in feat_cols]).setStrategy("median")
+
+assembler = VectorAssembler(
+    inputCols=[f"{c}_imp" for c in feat_cols],
+    outputCol="features_raw",
+    handleInvalid="keep"
+)
+
+scaler = StandardScaler(inputCol="features_raw", outputCol="features", withMean=True, withStd=True)
+
+k = 4  # choose 3-6 to start; 4 is a good default
+kmeans = KMeans(featuresCol="features", predictionCol="cluster_timeline", k=k, seed=42)
+
+pca = PCA(k=2, inputCol="features", outputCol="pca2")
+
+pipe = Pipeline(stages=[imputer, assembler, scaler, kmeans, pca])
+m1 = pipe.fit(d1)
+out1 = m1.transform(d1)
+
+# ---- Cluster size bar (Spark -> Pandas small)
+sizes = out1.groupBy("cluster_timeline").count().orderBy("cluster_timeline").toPandas()
+plt.figure(figsize=(7,3))
+plt.bar(sizes["cluster_timeline"].astype(str), sizes["count"])
+plt.xlabel("cluster_timeline")
+plt.ylabel("projects")
+plt.title("Timeline Clusters: size")
+plt.show()
+
+# ---- PCA scatter (sample)
+pdf = (out1.select("cluster_timeline", F.col("pca2")[0].alias("pc1"), F.col("pca2")[1].alias("pc2"))
+          .sample(False, 0.05, seed=42)
+          .toPandas())
+
+plt.figure(figsize=(7,5))
+plt.scatter(pdf["pc1"], pdf["pc2"], c=pdf["cluster_timeline"])
+plt.xlabel("PC1")
+plt.ylabel("PC2")
+plt.title("Timeline Clusters (PCA projection)")
+plt.show()
+
+# ---- Cluster profile table (mean cycle days)
+profile = (out1.groupBy("cluster_timeline")
+              .agg(*[F.round(F.avg(c),1).alias(f"avg_{c}") for c in ct_cols],
+                   F.count("*").alias("n"))
+              .orderBy("cluster_timeline"))
+display(profile)
+
+
