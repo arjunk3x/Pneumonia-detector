@@ -304,3 +304,193 @@ plot_pca_scatter(mgr_pred, "pca", "cluster_manager", "PCA view — Manager clust
 
 # Show managers by cluster (example)
 display(mgr_pred.select("pm_clean","n_projects","cluster_manager","med_a2_b","med_d_e","pct_late_C").orderBy("cluster_manager", F.desc("med_d_e")))
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+from pyspark.sql import functions as F
+
+# Use your main df or df_analysis; you said use df
+d = df
+
+# Optional: keep only rows you use for benchmark analysis
+d = d.filter((F.col("benchmark_eligible") == 1) & (F.col("is_sequence_full") == 1))
+
+cycle_cols = [
+    "ct_a2_to_b_days",
+    "ct_b_to_c_days",
+    "ct_c_to_d_days",
+    "ct_d_to_e_days"
+]
+
+# Ensure numeric
+for c in cycle_cols:
+    d = d.withColumn(c, F.col(c).cast("double"))
+
+# 1) Overall counts
+overall = d.agg(
+    F.count("*").alias("rows"),
+    *[F.sum(F.col(c).isNull().cast("int")).alias(f"{c}_null") for c in cycle_cols],
+    *[F.sum((F.col(c) < 0).cast("int")).alias(f"{c}_neg") for c in cycle_cols],
+    *[F.sum((F.col(c) == 0).cast("int")).alias(f"{c}_zero") for c in cycle_cols],
+).withColumn(
+    "rows_with_any_null",
+    sum(F.col(f"{c}_null") for c in cycle_cols)  # not exact rows, but quick indicator
+)
+
+display(overall)
+
+# 2) By category (OPPM vs P6)
+by_cat = (
+    d.groupBy("category_clean")
+     .agg(
+         F.count("*").alias("rows"),
+         *[F.sum(F.col(c).isNull().cast("int")).alias(f"{c}_null") for c in cycle_cols],
+         *[F.sum((F.col(c) < 0).cast("int")).alias(f"{c}_neg") for c in cycle_cols],
+         *[F.sum((F.col(c) == 0).cast("int")).alias(f"{c}_zero") for c in cycle_cols],
+     )
+     .orderBy("category_clean")
+)
+display(by_cat)
+
+# 3) Null/neg rates (percentages) by category
+by_cat_rates = by_cat
+for c in cycle_cols:
+    by_cat_rates = (
+        by_cat_rates
+        .withColumn(f"{c}_null_pct", F.round(F.col(f"{c}_null") * 100.0 / F.col("rows"), 2))
+        .withColumn(f"{c}_neg_pct",  F.round(F.col(f"{c}_neg")  * 100.0 / F.col("rows"), 2))
+        .withColumn(f"{c}_zero_pct", F.round(F.col(f"{c}_zero") * 100.0 / F.col("rows"), 2))
+    )
+display(by_cat_rates.select("category_clean","rows", *[f"{c}_{m}_pct" for c in cycle_cols for m in ["null","neg","zero"]]))
+
+
+
+
+
+
+
+
+
+
+
+# Percentiles help decide whether to cap/winsorize
+percentiles = [0.01, 0.05, 0.5, 0.8, 0.9, 0.95, 0.99]
+
+rows = []
+for c in cycle_cols:
+    stats = (
+        d.filter(F.col(c).isNotNull() & (F.col(c) >= 0))
+         .groupBy("category_clean")
+         .agg(
+             F.count("*").alias("n"),
+             *[F.expr(f"percentile_approx({c}, {p})").alias(f"p{int(p*100)}") for p in percentiles],
+             F.max(c).alias("max")
+         )
+         .withColumn("transition", F.lit(c))
+    )
+    rows.append(stats)
+
+pct_df = rows[0]
+for r in rows[1:]:
+    pct_df = pct_df.unionByName(r)
+
+display(pct_df.orderBy("transition","category_clean"))
+
+
+
+
+
+
+
+# Where do negatives happen? Are they in OUT_OF_ORDER transitions?
+qc = (
+    d.select(
+        "Project ID", "category_clean",
+        "seq_a2_b_status","seq_b_c_status","seq_c_d_status","seq_d_e_status",
+        "sequence_breaks",
+        "all_gates_same_date","consecutive_zero_cnt",
+        *cycle_cols
+    )
+)
+
+# Count negatives by seq status
+neg_by_seq = (
+    qc.select(
+        "category_clean",
+        F.when(F.col("ct_a2_to_b_days") < 0, F.lit("A2→B")).alias("neg_transition"),
+        "seq_a2_b_status"
+    )
+    .filter(F.col("neg_transition").isNotNull())
+    .groupBy("category_clean","neg_transition","seq_a2_b_status")
+    .count()
+)
+
+display(neg_by_seq.orderBy(F.desc("count")))
+
+# Similar for other transitions (quick union)
+def neg_table(ct_col, label, seq_col):
+    return (
+        qc.select("category_clean",
+                  F.when(F.col(ct_col) < 0, F.lit(label)).alias("neg_transition"),
+                  F.col(seq_col).alias("seq_status"))
+        .filter(F.col("neg_transition").isNotNull())
+        .groupBy("category_clean","neg_transition","seq_status")
+        .count()
+    )
+
+neg_all = neg_table("ct_a2_to_b_days","A2→B","seq_a2_b_status") \
+    .unionByName(neg_table("ct_b_to_c_days","B→C","seq_b_c_status")) \
+    .unionByName(neg_table("ct_c_to_d_days","C→D","seq_c_d_status")) \
+    .unionByName(neg_table("ct_d_to_e_days","D→E","seq_d_e_status"))
+
+display(neg_all.orderBy("neg_transition", F.desc("count")))
+
+
+
+
+
+
+
+pattern_df = (
+    d.select(
+        "Project ID", "category_clean",
+        *[F.col(c).isNotNull().cast("int").alias(c+"_has") for c in cycle_cols]
+    )
+    .withColumn("has_pattern", F.concat_ws("",
+        *[F.col(c+"_has").cast("string") for c in cycle_cols]
+    ))
+)
+
+pattern_summary = (
+    pattern_df.groupBy("category_clean","has_pattern")
+              .count()
+              .orderBy("category_clean", F.desc("count"))
+)
+
+display(pattern_summary)
+
+
