@@ -1,3 +1,135 @@
+from pyspark.sql import functions as F
+
+d3 = df.filter((F.col("benchmark_eligible")==1) & (F.col("is_sequence_full")==1))
+gates = ["A2","B","C","D","E"]
+
+# Distinct flag values per gate + null rate
+for g in gates:
+    col = f"{g}_timeliness_flag"
+    print(g, "distinct flags:")
+    display(
+        d3.groupBy(F.upper(F.trim(F.col(col))).alias("flag"))
+          .count()
+          .orderBy(F.desc("count"))
+    )
+    display(
+        d3.agg(F.round(F.mean(F.col(col).isNull().cast("int"))*100,2).alias(f"{g}_flag_null_pct"))
+    )
+
+
+
+
+cycle_cols = ["ct_a2_to_b_days","ct_b_to_c_days","ct_c_to_d_days","ct_d_to_e_days"]
+
+proj_qc_by_mgr = (
+    d3.groupBy("pm_clean")
+      .agg(
+          F.count("*").alias("n_projects"),
+          *[F.round(F.mean(F.col(c).isNull().cast("int"))*100,2).alias(f"{c}_null_pct") for c in cycle_cols],
+          *[F.round(F.mean((F.col(c)<0).cast("int"))*100,2).alias(f"{c}_neg_pct") for c in cycle_cols],
+          *[F.round(F.mean((F.col(c)==0).cast("int"))*100,2).alias(f"{c}_zero_pct") for c in cycle_cols],
+      )
+      .orderBy(F.desc("n_projects"))
+)
+
+display(proj_qc_by_mgr)
+
+
+
+
+
+mgr_cov = (
+    d3.groupBy("pm_clean")
+      .agg(
+          F.count("*").alias("n_projects"),
+          F.count("ct_a2_to_b_days").alias("n_a2_b"),
+          F.count("ct_b_to_c_days").alias("n_b_c"),
+          F.count("ct_c_to_d_days").alias("n_c_d"),
+          F.count("ct_d_to_e_days").alias("n_d_e"),
+          F.expr("percentile_approx(ct_a2_to_b_days, 0.5)").alias("med_a2_b"),
+          F.expr("percentile_approx(ct_b_to_c_days, 0.5)").alias("med_b_c"),
+          F.expr("percentile_approx(ct_c_to_d_days, 0.5)").alias("med_c_d"),
+          F.expr("percentile_approx(ct_d_to_e_days, 0.5)").alias("med_d_e"),
+      )
+      .withColumn("cov_a2_b", F.round(F.col("n_a2_b")/F.col("n_projects"),3))
+      .withColumn("cov_b_c",  F.round(F.col("n_b_c") /F.col("n_projects"),3))
+      .withColumn("cov_c_d",  F.round(F.col("n_c_d") /F.col("n_projects"),3))
+      .withColumn("cov_d_e",  F.round(F.col("n_d_e") /F.col("n_projects"),3))
+      .orderBy(F.desc("n_projects"))
+)
+
+display(mgr_cov)
+
+
+
+
+
+stage_by_mgr = (
+    d3.groupBy("pm_clean","project_status_gate_based")
+      .count()
+)
+
+# Share distribution per manager
+stage_share = (
+    stage_by_mgr
+    .groupBy("pm_clean")
+    .pivot("project_status_gate_based")
+    .sum("count")
+    .na.fill(0)
+)
+
+display(stage_share)
+
+
+
+
+
+flag_cols = ["A2_timeliness_flag","B_timeliness_flag","C_timeliness_flag","D_timeliness_flag","E_timeliness_flag"]
+
+flag_null_by_mgr = (
+    d3.groupBy("pm_clean")
+      .agg(
+          F.count("*").alias("n_projects"),
+          *[F.round(F.mean(F.col(c).isNull().cast("int"))*100,2).alias(f"{c}_null_pct") for c in flag_cols],
+      )
+      .orderBy(F.desc("n_projects"))
+)
+
+display(flag_null_by_mgr)
+
+
+
+
+
+
+# Build your mgr table as you do, but stop before the imputer
+mgr_raw = mgr  # assuming mgr is created up to feat_cols casting
+
+feat_cols = ["med_a2_b","med_b_c","med_c_d","med_d_e","late_rate","overdue_rate","noplan_rate"]
+
+mgr_feat_nulls = mgr_raw.agg(
+    F.count("*").alias("n_managers"),
+    *[F.sum(F.col(c).isNull().cast("int")).alias(f"{c}_null_cnt") for c in feat_cols],
+    *[F.round(F.mean(F.col(c).isNull().cast("int"))*100,2).alias(f"{c}_null_pct") for c in feat_cols],
+)
+display(mgr_feat_nulls)
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 # =========================
 # USE CASE 3: Manager Archetypes (pm_clean)
 # =========================
@@ -69,3 +201,4 @@ plot_cluster_sizes(out3, "cluster_manager", f"Use Case 3: Manager archetypes (n>
 plot_pca_scatter(out3, "pca2", "cluster_manager", f"Use Case 3: Manager archetypes — PCA scatter", frac=1.0)
 
 display(out3.select("pm_clean","n_projects","cluster_manager",*feat_cols).orderBy("cluster_manager", F.desc("med_d_e")))
+
