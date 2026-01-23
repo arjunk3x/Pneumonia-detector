@@ -1,413 +1,306 @@
-# ============================================================
-# 0) LIBS
-# ============================================================
 from pyspark.sql import functions as F
 from pyspark.ml import Pipeline
 from pyspark.ml.feature import (
-    VectorAssembler, StandardScaler,
-    StringIndexer, OneHotEncoder
+    Imputer, StringIndexer, OneHotEncoder, VectorAssembler, StandardScaler, PCA
 )
-from pyspark.ml.clustering import KMeans
+from pyspark.ml.clustering import KMeans, GaussianMixture
 from pyspark.ml.evaluation import ClusteringEvaluator
+from pyspark.ml.functions import vector_to_array
 
-# ============================================================
-# 1) START FROM df (as you requested)
-# ============================================================
-df0 = df
+import pandas as pd
+import matplotlib.pyplot as plt
 
-# Make sure category is clean (OPPM / P6)
-df0 = df0.withColumn("category_clean", F.upper(F.trim(F.col("category").cast("string"))))
 
-PID = "Project ID"
+def plot_cluster_sizes(df_pred, cluster_col, title):
+    counts = (df_pred.groupBy(cluster_col).count().orderBy(cluster_col))
+    pdf = counts.toPandas()
+    plt.figure(figsize=(8,3))
+    plt.bar(pdf[cluster_col].astype(str), pdf["count"])
+    plt.title(title)
+    plt.xlabel("Cluster")
+    plt.ylabel("Count")
+    plt.tight_layout()
+    plt.show()
+    display(counts)
 
-# ============================================================
-# 2) ENSURE delay_days_actual_minus_planned exists (for df)
-#    delay = Decision Date - Approval Date
-# ============================================================
-gate_map = [
-    ("A2", "Gate A2 Decision Date", "Gate A2 Approval Date"),
-    ("B",  "Gate B Decision Date",  "Gate B Approval Date"),
-    ("C",  "Gate C Decision Date",  "Gate C Approval Date"),
-    ("D",  "Gate D Decision Date",  "Gate D Approval Date"),
-    ("E",  "Gate E Decision Date",  "Gate E Approval Date"),
-]
-
-for g, dcol, acol in gate_map:
-    new_col = f"{g}_delay_days_actual_minus_planned"
-    if new_col not in df0.columns:
-        df0 = df0.withColumn(
-            new_col,
-            F.when(F.col(dcol).isNotNull() & F.col(acol).isNotNull(),
-                   F.datediff(F.col(dcol), F.col(acol)).cast("int")
-            ).otherwise(F.lit(None).cast("int"))
-        )
-
-# ============================================================
-# 3) ENSURE timeliness_flag exists (optional safety)
-#    If missing, we build it using decision vs approval + current_date.
-# ============================================================
-analysis_date = F.current_date()
-
-for g, dcol, acol in gate_map:
-    flag_col = f"{g}_timeliness_flag"
-    delay_col = f"{g}_delay_days_actual_minus_planned"
-    if flag_col not in df0.columns:
-        df0 = df0.withColumn(
-            flag_col,
-            F.when(F.col(acol).isNull(), F.lit("NO_PLAN"))
-             .when(F.col(dcol).isNotNull() & (F.col(delay_col) < 0), F.lit("EARLY"))
-             .when(F.col(dcol).isNotNull() & (F.col(delay_col) == 0), F.lit("ON_TIME"))
-             .when(F.col(dcol).isNotNull() & (F.col(delay_col) > 0), F.lit("LATE"))
-             .when(F.col(dcol).isNull() & (analysis_date > F.col(acol)), F.lit("OVERDUE"))
-             .otherwise(F.lit("UPCOMING"))
-        )
-
-# ============================================================
-# 4) Helper: numeric KMeans with scaling
-# ============================================================
-def kmeans_numeric(df_in, feature_cols, out_col, k=4, seed=42, filter_nulls=True):
-    df_use = df_in
-    if filter_nulls:
-        for c in feature_cols:
-            df_use = df_use.filter(F.col(c).isNotNull())
-
-    assembler = VectorAssembler(inputCols=feature_cols, outputCol=f"__vec_{out_col}")
-    scaler = StandardScaler(inputCol=f"__vec_{out_col}", outputCol=f"__scaled_{out_col}", withMean=True, withStd=True)
-    kmeans = KMeans(featuresCol=f"__scaled_{out_col}", predictionCol=out_col, k=k, seed=seed)
-
-    pipe = Pipeline(stages=[assembler, scaler, kmeans])
-    model = pipe.fit(df_use)
-    out = model.transform(df_use)
-
-    sil = ClusteringEvaluator(featuresCol=f"__scaled_{out_col}", predictionCol=out_col, metricName="silhouette").evaluate(out)
-    return out, model, sil
-
-# ============================================================
-# 5) CLUSTER #1 — Timeline shape (cycle times)
-#    Uses: ct_a2_to_b_days, ct_b_to_c_days, ct_c_to_d_days, ct_d_to_e_days
-# ============================================================
-timeline_cols = ["ct_a2_to_b_days", "ct_b_to_c_days", "ct_c_to_d_days", "ct_d_to_e_days"]
-
-df_timeline = (
-    df0.filter((F.col("benchmark_eligible") == 1) & (F.col("is_sequence_full") == 1))
-)
-
-df_timeline_clustered, model_timeline, sil_timeline = kmeans_numeric(
-    df_timeline, timeline_cols, out_col="cluster_timeline", k=4
-)
-
-print("Timeline clustering silhouette:", sil_timeline)
-display(df_timeline_clustered.groupBy("cluster_timeline").count().orderBy(F.desc("count")))
-display(
-    df_timeline_clustered.groupBy("cluster_timeline")
-    .agg(*[F.round(F.avg(c), 1).alias(f"avg_{c}") for c in timeline_cols])
-    .orderBy("cluster_timeline")
-)
-
-# ============================================================
-# 6) CLUSTER #2 — Timeliness behaviour
-#    Features per project:
-#      counts of flags + avg/max delay over gates
-# ============================================================
-flag_cols  = [f"{g}_timeliness_flag" for g,_,_ in gate_map]
-delay_cols = [f"{g}_delay_days_actual_minus_planned" for g,_,_ in gate_map]
-
-df_beh = (
-    df0.filter((F.col("benchmark_eligible") == 1) & (F.col("is_sequence_full") == 1))
-)
-
-def count_flag(flag):
-    return sum(F.when(F.upper(F.col(c).cast("string")) == flag, 1).otherwise(0) for c in flag_cols)
-
-df_beh = (
-    df_beh
-    .withColumn("cnt_late",     count_flag("LATE"))
-    .withColumn("cnt_overdue",  count_flag("OVERDUE"))
-    .withColumn("cnt_on_time",  count_flag("ON_TIME"))
-    .withColumn("cnt_early",    count_flag("EARLY"))
-    .withColumn("cnt_upcoming", count_flag("UPCOMING"))
-    .withColumn("cnt_no_plan",  count_flag("NO_PLAN"))
-)
-
-delay_sum = sum(F.coalesce(F.col(c).cast("double"), F.lit(0.0)) for c in delay_cols)
-delay_n   = sum(F.when(F.col(c).isNotNull(), 1).otherwise(0) for c in delay_cols)
-
-df_beh = (
-    df_beh
-    .withColumn("avg_delay_days", F.when(delay_n > 0, delay_sum / delay_n).otherwise(F.lit(None).cast("double")))
-    .withColumn("max_delay_days", F.greatest(*[F.coalesce(F.col(c).cast("double"), F.lit(float("-inf"))) for c in delay_cols]))
-)
-
-beh_cols = ["cnt_late","cnt_overdue","cnt_on_time","cnt_early","cnt_upcoming","cnt_no_plan","avg_delay_days","max_delay_days"]
-
-df_beh_clustered, model_beh, sil_beh = kmeans_numeric(
-    df_beh, beh_cols, out_col="cluster_timeliness", k=4
-)
-
-print("Timeliness clustering silhouette:", sil_beh)
-display(df_beh_clustered.groupBy("cluster_timeliness").count().orderBy(F.desc("count")))
-display(
-    df_beh_clustered.groupBy("cluster_timeliness")
-    .agg(*[F.round(F.avg(c), 2).alias(f"avg_{c}") for c in beh_cols])
-    .orderBy("cluster_timeliness")
-)
-
-# ============================================================
-# 7) CLUSTER #3 — Data quality / anomaly clustering
-#    IMPORTANT: sequence_breaks is STRING -> we don't use it directly.
-#    Instead we create numeric flags for out-of-order transitions.
-# ============================================================
-df_q = df0
-
-df_q = (
-    df_q
-    .withColumn("oo_a2_b", F.when(F.col("seq_a2_b_status") == "OUT_OF_ORDER", 1).otherwise(0))
-    .withColumn("oo_b_c",  F.when(F.col("seq_b_c_status")  == "OUT_OF_ORDER", 1).otherwise(0))
-    .withColumn("oo_c_d",  F.when(F.col("seq_c_d_status")  == "OUT_OF_ORDER", 1).otherwise(0))
-    .withColumn("oo_d_e",  F.when(F.col("seq_d_e_status")  == "OUT_OF_ORDER", 1).otherwise(0))
-    .withColumn("all_gates_same_date", F.col("all_gates_same_date").cast("int"))
-    .withColumn("is_sequence_strict",  F.col("is_sequence_strict").cast("int"))
-    .withColumn("is_sequence_full",    F.col("is_sequence_full").cast("int"))
-)
-
-quality_cols = [
-    "gate_dates_present_cnt",
-    "is_sequence_strict",
-    "is_sequence_full",
-    "oo_a2_b","oo_b_c","oo_c_d","oo_d_e",
-    "zero_a2_b","zero_b_c","zero_c_d","zero_d_e",
-    "consecutive_zero_cnt",
-    "all_gates_same_date"
-]
-
-df_quality_clustered, model_quality, sil_quality = kmeans_numeric(
-    df_q, quality_cols, out_col="cluster_quality", k=4
-)
-
-print("Quality clustering silhouette:", sil_quality)
-display(df_quality_clustered.groupBy("cluster_quality").count().orderBy(F.desc("count")))
-display(
-    df_quality_clustered.groupBy("cluster_quality")
-    .agg(*[F.round(F.avg(c), 2).alias(f"avg_{c}") for c in quality_cols])
-    .orderBy("cluster_quality")
-)
-
-# ============================================================
-# 8) CLUSTER #4 — Portfolio segmentation (mixed categorical + numeric)
-#    Categories: region, Investment Type, Project Type, Delivery Unit
-#    Numeric: avg_delay_days, cnt_overdue, cnt_no_plan
-# ============================================================
-cat_cols = ["region", "Investment Type", "Project Type", "Delivery Unit"]
-num_cols = ["avg_delay_days", "cnt_overdue", "cnt_no_plan"]
-
-df_port = df_beh  # already has numeric fields
-
-# Clean categorical
-for c in cat_cols:
-    df_port = df_port.withColumn(
-        c,
-        F.when(F.trim(F.col(c).cast("string")) == "", F.lit("Unknown"))
-         .otherwise(F.coalesce(F.trim(F.col(c).cast("string")), F.lit("Unknown")))
+def plot_pca_scatter(df_pred, pca_col, cluster_col, title, sample_n=5000):
+    df_vis = (
+        df_pred
+        .select(cluster_col, vector_to_array(F.col(pca_col)).alias("p"))
+        .select(cluster_col, F.col("p")[0].alias("x"), F.col("p")[1].alias("y"))
+        .dropna()
+        .limit(sample_n)
+        .toPandas()
     )
 
-indexers = [StringIndexer(inputCol=c, outputCol=f"{c}_idx", handleInvalid="keep") for c in cat_cols]
-encoder = OneHotEncoder(
-    inputCols=[f"{c}_idx" for c in cat_cols],
-    outputCols=[f"{c}_ohe" for c in cat_cols],
+    plt.figure(figsize=(7,4))
+    # plot each cluster separately (no explicit colors)
+    for cl in sorted(df_vis[cluster_col].unique()):
+        sub = df_vis[df_vis[cluster_col] == cl]
+        plt.scatter(sub["x"], sub["y"], s=10, label=f"cluster {cl}", alpha=0.6)
+    plt.title(title)
+    plt.xlabel("PCA 1")
+    plt.ylabel("PCA 2")
+    plt.legend()
+    plt.tight_layout()
+    plt.show()
+
+
+
+
+
+
+# --------- 1) Filter clean rows ----------
+df1 = (
+    df
+    .filter((F.col("benchmark_eligible") == 1) & (F.col("is_sequence_full") == 1))
+    .filter(F.col("project_status_gate_based") == "Completed")
+)
+
+cycle_cols = ["ct_a2_to_b_days", "ct_b_to_c_days", "ct_c_to_d_days", "ct_d_to_e_days"]
+
+# cast + keep non-negative
+for c in cycle_cols:
+    df1 = df1.withColumn(c, F.when(F.col(c).cast("double") >= 0, F.col(c).cast("double")).otherwise(None))
+
+# --------- 2) Build pipeline (impute -> scale -> PCA -> KMeans) ----------
+imputer = Imputer(inputCols=cycle_cols, outputCols=[c+"_imp" for c in cycle_cols], strategy="median")
+
+assembler = VectorAssembler(
+    inputCols=[c+"_imp" for c in cycle_cols],
+    outputCol="features_raw",
     handleInvalid="keep"
 )
 
-assembler = VectorAssembler(
-    inputCols=num_cols + [f"{c}_ohe" for c in cat_cols],
-    outputCol="__vec_port"
-)
-scaler = StandardScaler(inputCol="__vec_port", outputCol="__scaled_port", withMean=True, withStd=True)
+scaler = StandardScaler(inputCol="features_raw", outputCol="features", withMean=True, withStd=True)
+pca = PCA(k=2, inputCol="features", outputCol="pca")
 
-kmeans = KMeans(featuresCol="__scaled_port", predictionCol="cluster_portfolio", k=5, seed=42)
+kmeans = KMeans(k=4, seed=42, featuresCol="features", predictionCol="cluster_timeline")
 
-pipe = Pipeline(stages=indexers + [encoder, assembler, scaler, kmeans])
-model_port = pipe.fit(df_port)
-df_port_clustered = model_port.transform(df_port)
+pipe = Pipeline(stages=[imputer, assembler, scaler, pca, kmeans])
+model1 = pipe.fit(df1)
+df1_pred = model1.transform(df1)
 
-sil_port = ClusteringEvaluator(featuresCol="__scaled_port", predictionCol="cluster_portfolio", metricName="silhouette").evaluate(df_port_clustered)
+# --------- 3) Visuals ----------
+plot_cluster_sizes(df1_pred, "cluster_timeline", "Cluster sizes — Lifecycle timeline shape")
+plot_pca_scatter(df1_pred, "pca", "cluster_timeline", "PCA view — Timeline clusters")
 
-print("Portfolio clustering silhouette:", sil_port)
-display(df_port_clustered.groupBy("cluster_portfolio").count().orderBy(F.desc("count")))
-
-# ============================================================
-# 9) Join all cluster labels back into one table (per project)
-# ============================================================
-df_clusters = (
-    df0.select(PID, "category_clean")
-    .join(df_timeline_clustered.select(PID, "cluster_timeline"), on=PID, how="left")
-    .join(df_beh_clustered.select(PID, "cluster_timeliness"), on=PID, how="left")
-    .join(df_quality_clustered.select(PID, "cluster_quality"), on=PID, how="left")
-    .join(df_port_clustered.select(PID, "cluster_portfolio"), on=PID, how="left")
-)
-
-display(df_clusters.limit(50))
-
-# Optional: see cluster mix by OPPM vs P6
-display(df_clusters.groupBy("category_clean", "cluster_timeline").count().orderBy("category_clean", "cluster_timeline"))
-display(df_clusters.groupBy("category_clean", "cluster_timeliness").count().orderBy("category_clean", "cluster_timeliness"))
-display(df_clusters.groupBy("category_clean", "cluster_quality").count().orderBy("category_clean", "cluster_quality"))
-display(df_clusters.groupBy("category_clean", "cluster_portfolio").count().orderBy("category_clean", "cluster_portfolio"))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-import matplotlib.pyplot as plt
-from pyspark.sql import functions as F
-
-# -----------------------------
-# Helper 1: Cluster sizes bar
-# -----------------------------
-def plot_cluster_sizes(df_clustered, cluster_col, title):
-    sizes = (df_clustered.groupBy(cluster_col).count().orderBy(cluster_col).toPandas())
-    plt.figure(figsize=(8, 4))
-    plt.bar(sizes[cluster_col].astype(str), sizes["count"])
-    plt.xlabel("Cluster")
-    plt.ylabel("Number of projects")
-    plt.title(title)
-    plt.tight_layout()
-    plt.show()
-    display(df_clustered.groupBy(cluster_col).count().orderBy(F.desc("count")))
-
-# -----------------------------
-# Helper 2: Cluster profile (mean per feature) as grouped bars
-# -----------------------------
-def plot_cluster_profile(df_clustered, cluster_col, feature_cols, title):
-    prof = (
-        df_clustered.groupBy(cluster_col)
-        .agg(*[F.avg(F.col(c).cast("double")).alias(c) for c in feature_cols])
-        .orderBy(cluster_col)
-        .toPandas()
-    )
-
-    # plot each cluster as a separate bar group per feature
-    x = range(len(feature_cols))
-    plt.figure(figsize=(12, 4))
-    for _, row in prof.iterrows():
-        plt.plot(feature_cols, [row[c] for c in feature_cols], marker="o", label=f"Cluster {int(row[cluster_col])}")
-
-    plt.xticks(rotation=45, ha="right")
-    plt.ylabel("Average value")
-    plt.title(title)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-    display(df_clustered.groupBy(cluster_col).agg(*[F.round(F.avg(c),2).alias(f"avg_{c}") for c in feature_cols]).orderBy(cluster_col))
-
-# -----------------------------
-# Helper 3: Category mix per cluster (OPPM vs P6) as % stacked bar
-# -----------------------------
-def plot_category_mix(df_clustered, cluster_col, category_col="category_clean", title="Category mix"):
-    mix = (
-        df_clustered.groupBy(cluster_col, category_col).count()
-        .groupBy(cluster_col)
-        .pivot(category_col)
-        .sum("count")
-        .na.fill(0)
-        .orderBy(cluster_col)
-        .toPandas()
-    )
-
-    # convert to percentages per cluster
-    cats = [c for c in mix.columns if c != cluster_col]
-    mix["total"] = mix[cats].sum(axis=1)
-    for c in cats:
-        mix[c] = (mix[c] / mix["total"]).fillna(0)
-
-    plt.figure(figsize=(8, 4))
-    bottom = None
-    x = mix[cluster_col].astype(str)
-
-    for c in cats:
-        if bottom is None:
-            plt.bar(x, mix[c], label=c)
-            bottom = mix[c].values
-        else:
-            plt.bar(x, mix[c], bottom=bottom, label=c)
-            bottom = bottom + mix[c].values
-
-    plt.xlabel("Cluster")
-    plt.ylabel("Share of projects")
-    plt.title(title)
-    plt.legend()
-    plt.tight_layout()
-    plt.show()
-
-    display(mix)
-
-# -----------------------------
-# VISUAL 1: Timeline clusters
-# -----------------------------
-plot_cluster_sizes(df_timeline_clustered, "cluster_timeline", f"Cluster sizes — Timeline (silhouette={sil_timeline:.3f})")
-plot_cluster_profile(df_timeline_clustered, "cluster_timeline", timeline_cols, "Timeline cluster profiles (avg cycle days per transition)")
-plot_category_mix(df_timeline_clustered, "cluster_timeline", title="OPPM vs P6 mix by Timeline cluster")
-
-# Extra: "centroid shape" chart (avg cycle per transition per cluster) as line plot
-timeline_means = (
-    df_timeline_clustered.groupBy("cluster_timeline")
-    .agg(*[F.avg(c).alias(c) for c in timeline_cols])
+# --------- 4) Cluster profiles (means) ----------
+profile1 = (
+    df1_pred.groupBy("cluster_timeline")
+    .agg(*[F.round(F.avg(c),1).alias(f"avg_{c}") for c in cycle_cols], F.count("*").alias("n"))
     .orderBy("cluster_timeline")
-    .toPandas()
 )
-plt.figure(figsize=(10, 4))
-for _, r in timeline_means.iterrows():
-    plt.plot(timeline_cols, [r[c] for c in timeline_cols], marker="o", label=f"Cluster {int(r['cluster_timeline'])}")
-plt.xticks(rotation=45, ha="right")
-plt.ylabel("Avg days")
-plt.title("Timeline clusters — average cycle-time shape")
-plt.legend()
-plt.tight_layout()
-plt.show()
-
-# -----------------------------
-# VISUAL 2: Timeliness clusters
-# -----------------------------
-plot_cluster_sizes(df_beh_clustered, "cluster_timeliness", f"Cluster sizes — Timeliness (silhouette={sil_beh:.3f})")
-plot_cluster_profile(df_beh_clustered, "cluster_timeliness", beh_cols, "Timeliness cluster profiles (avg counts + avg/max delay)")
-plot_category_mix(df_beh_clustered, "cluster_timeliness", title="OPPM vs P6 mix by Timeliness cluster")
-
-# -----------------------------
-# VISUAL 3: Data-quality clusters
-# -----------------------------
-plot_cluster_sizes(df_quality_clustered, "cluster_quality", f"Cluster sizes — Data Quality (silhouette={sil_quality:.3f})")
-plot_cluster_profile(df_quality_clustered, "cluster_quality", quality_cols, "Quality cluster profiles (avg flags)")
-plot_category_mix(df_quality_clustered, "cluster_quality", title="OPPM vs P6 mix by Quality cluster")
-
-# -----------------------------
-# VISUAL 4: Portfolio clusters (mixed categorical + numeric)
-# For portfolio we mainly look at sizes + category mix (profiles are high-dim due to one-hot)
-# -----------------------------
-plot_cluster_sizes(df_port_clustered, "cluster_portfolio", f"Cluster sizes — Portfolio (silhouette={sil_port:.3f})")
-plot_category_mix(df_port_clustered, "cluster_portfolio", title="OPPM vs P6 mix by Portfolio cluster")
+display(profile1)
 
 
+
+
+
+# --------- 1) Start from clean df for analysis ----------
+df2 = df.filter((F.col("benchmark_eligible") == 1) & (F.col("is_sequence_full") == 1))
+
+gates = ["A2","B","C","D","E"]
+decision_map = {
+    "A2":"Gate A2 Decision Date", "B":"Gate B Decision Date", "C":"Gate C Decision Date",
+    "D":"Gate D Decision Date", "E":"Gate E Decision Date"
+}
+plan_map = {
+    "A2":"Gate A2 Approval Date", "B":"Gate B Approval Date", "C":"Gate C Approval Date",
+    "D":"Gate D Approval Date", "E":"Gate E Approval Date"
+}
+
+today = F.current_date()
+
+# --------- 2) Create numeric delay = Decision - Planned (positive => late) ----------
+for g in gates:
+    dcol = F.col(decision_map[g]).cast("date")
+    pcol = F.col(plan_map[g]).cast("date")
+
+    df2 = df2.withColumn(
+        f"{g}_delay_actual_minus_planned_days",
+        F.when(dcol.isNotNull() & pcol.isNotNull(), F.datediff(dcol, pcol)).otherwise(None).cast("double")
+    )
+
+    # per-gate status flag
+    df2 = df2.withColumn(
+        f"{g}_plan_status",
+        F.when(pcol.isNull(), F.lit("NO_PLAN"))
+         .when(dcol.isNull() & (today > pcol), F.lit("OVERDUE"))
+         .when(dcol.isNull() & (today <= pcol), F.lit("UPCOMING"))
+         .when(dcol.isNotNull() & (F.datediff(dcol, pcol) < 0), F.lit("EARLY"))
+         .when(dcol.isNotNull() & (F.datediff(dcol, pcol) == 0), F.lit("ON_TIME"))
+         .otherwise(F.lit("LATE"))
+    )
+
+# --------- 3) Behaviour counts across gates ----------
+df2 = df2.withColumn("n_late", sum(F.col(f"{g}_plan_status").eqNullSafe("LATE").cast("int") for g in gates)) \
+         .withColumn("n_overdue", sum(F.col(f"{g}_plan_status").eqNullSafe("OVERDUE").cast("int") for g in gates)) \
+         .withColumn("n_no_plan", sum(F.col(f"{g}_plan_status").eqNullSafe("NO_PLAN").cast("int") for g in gates)) \
+         .withColumn("n_upcoming", sum(F.col(f"{g}_plan_status").eqNullSafe("UPCOMING").cast("int") for g in gates)) \
+         .withColumn("n_on_time", sum(F.col(f"{g}_plan_status").eqNullSafe("ON_TIME").cast("int") for g in gates)) \
+         .withColumn("n_early", sum(F.col(f"{g}_plan_status").eqNullSafe("EARLY").cast("int") for g in gates))
+
+delay_cols = [f"{g}_delay_actual_minus_planned_days" for g in gates]
+feat_cols = delay_cols + ["n_late","n_overdue","n_no_plan","n_upcoming","n_on_time","n_early"]
+
+# --------- 4) Pipeline (impute -> scale -> PCA -> GMM) ----------
+imputer = Imputer(inputCols=delay_cols, outputCols=[c+"_imp" for c in delay_cols], strategy="median")
+assembler = VectorAssembler(inputCols=[c+"_imp" for c in delay_cols] + ["n_late","n_overdue","n_no_plan","n_upcoming","n_on_time","n_early"],
+                            outputCol="features_raw", handleInvalid="keep")
+scaler = StandardScaler(inputCol="features_raw", outputCol="features", withMean=True, withStd=True)
+pca = PCA(k=2, inputCol="features", outputCol="pca")
+gmm = GaussianMixture(k=4, seed=42, featuresCol="features", predictionCol="cluster_timeliness")
+
+pipe = Pipeline(stages=[imputer, assembler, scaler, pca, gmm])
+model2 = pipe.fit(df2)
+df2_pred = model2.transform(df2)
+
+# --------- 5) Visuals ----------
+plot_cluster_sizes(df2_pred, "cluster_timeliness", "Cluster sizes — Timeliness behaviour")
+plot_pca_scatter(df2_pred, "pca", "cluster_timeliness", "PCA view — Timeliness clusters")
+
+# --------- 6) Cluster profile ----------
+profile2 = (
+    df2_pred.groupBy("cluster_timeliness")
+    .agg(
+        F.count("*").alias("n"),
+        F.round(F.avg("n_late"),2).alias("avg_n_late"),
+        F.round(F.avg("n_overdue"),2).alias("avg_n_overdue"),
+        F.round(F.avg("n_no_plan"),2).alias("avg_n_no_plan")
+    ).orderBy("cluster_timeliness")
+)
+display(profile2)
+
+
+
+
+
+
+df3 = df.filter((F.col("benchmark_eligible") == 1) & (F.col("is_sequence_full") == 1))
+
+cat_cols = ["region", "Investment Type", "Project Type", "Delivery Unit", "category_clean"]
+num_cols = [
+    "ct_a2_to_b_days","ct_b_to_c_days","ct_c_to_d_days","ct_d_to_e_days",
+    "gate_dates_present_cnt","consecutive_zero_cnt","all_gates_same_date"
+]
+
+# 1) Fill categoricals
+df3 = df3.fillna("Unknown", subset=cat_cols)
+
+# 2) Cast numerics
+for c in num_cols:
+    df3 = df3.withColumn(c, F.col(c).cast("double"))
+
+# 3) Pipeline
+imputer = Imputer(inputCols=num_cols, outputCols=[c+"_imp" for c in num_cols], strategy="median")
+
+indexers = [StringIndexer(inputCol=c, outputCol=f"{c}_idx", handleInvalid="keep") for c in cat_cols]
+ohe = OneHotEncoder(inputCols=[f"{c}_idx" for c in cat_cols], outputCols=[f"{c}_ohe" for c in cat_cols], handleInvalid="keep")
+
+assembler = VectorAssembler(
+    inputCols=[c+"_imp" for c in num_cols] + [f"{c}_ohe" for c in cat_cols],
+    outputCol="features_raw",
+    handleInvalid="keep"
+)
+scaler = StandardScaler(inputCol="features_raw", outputCol="features", withMean=True, withStd=True)
+pca = PCA(k=2, inputCol="features", outputCol="pca")
+
+kmeans = KMeans(k=5, seed=42, featuresCol="features", predictionCol="cluster_profile")
+
+pipe = Pipeline(stages=[imputer] + indexers + [ohe, assembler, scaler, pca, kmeans])
+model3 = pipe.fit(df3)
+df3_pred = model3.transform(df3)
+
+# 4) Visuals
+plot_cluster_sizes(df3_pred, "cluster_profile", "Cluster sizes — Portfolio profiles")
+plot_pca_scatter(df3_pred, "pca", "cluster_profile", "PCA view — Portfolio profile clusters")
+
+# 5) Profile table (what each cluster looks like)
+profile3 = (
+    df3_pred.groupBy("cluster_profile")
+    .agg(
+        F.count("*").alias("n"),
+        F.round(F.avg("ct_a2_to_b_days"),1).alias("avg_a2_b"),
+        F.round(F.avg("ct_b_to_c_days"),1).alias("avg_b_c"),
+        F.round(F.avg("ct_c_to_d_days"),1).alias("avg_c_d"),
+        F.round(F.avg("ct_d_to_e_days"),1).alias("avg_d_e"),
+        F.expr("percentile_approx(ct_d_to_e_days, 0.8)").alias("p80_d_e")
+    ).orderBy("cluster_profile")
+)
+display(profile3)
+
+
+
+
+
+
+# Start from clean rows
+df4 = df.filter((F.col("benchmark_eligible") == 1) & (F.col("is_sequence_full") == 1))
+
+# Ensure pm_clean exists
+df4 = df4.withColumn("pm_clean", F.coalesce(F.trim(F.col("pm").cast("string")), F.lit("Unknown")))
+
+# Recompute per-gate plan_status quickly (same logic as earlier, but only need counts)
+gates = ["A2","B","C","D","E"]
+decision_map = {"A2":"Gate A2 Decision Date","B":"Gate B Decision Date","C":"Gate C Decision Date","D":"Gate D Decision Date","E":"Gate E Decision Date"}
+plan_map = {"A2":"Gate A2 Approval Date","B":"Gate B Approval Date","C":"Gate C Approval Date","D":"Gate D Approval Date","E":"Gate E Approval Date"}
+today = F.current_date()
+
+for g in gates:
+    dcol = F.col(decision_map[g]).cast("date")
+    pcol = F.col(plan_map[g]).cast("date")
+    df4 = df4.withColumn(
+        f"{g}_plan_status",
+        F.when(pcol.isNull(), F.lit("NO_PLAN"))
+         .when(dcol.isNull() & (today > pcol), F.lit("OVERDUE"))
+         .when(dcol.isNull() & (today <= pcol), F.lit("UPCOMING"))
+         .when(dcol.isNotNull() & (F.datediff(dcol, pcol) <= 0), F.lit("ON_OR_EARLY"))
+         .otherwise(F.lit("LATE"))
+    )
+
+# Aggregate per manager
+mgr = (
+    df4.groupBy("pm_clean")
+    .agg(
+        F.count("*").alias("n_projects"),
+        F.expr("percentile_approx(ct_a2_to_b_days, 0.5)").alias("med_a2_b"),
+        F.expr("percentile_approx(ct_b_to_c_days, 0.5)").alias("med_b_c"),
+        F.expr("percentile_approx(ct_c_to_d_days, 0.5)").alias("med_c_d"),
+        F.expr("percentile_approx(ct_d_to_e_days, 0.5)").alias("med_d_e"),
+        # rates
+        (F.avg(F.col("A2_plan_status").eqNullSafe("LATE").cast("int"))).alias("pct_late_A2"),
+        (F.avg(F.col("B_plan_status").eqNullSafe("LATE").cast("int"))).alias("pct_late_B"),
+        (F.avg(F.col("C_plan_status").eqNullSafe("LATE").cast("int"))).alias("pct_late_C"),
+        (F.avg(F.col("D_plan_status").eqNullSafe("LATE").cast("int"))).alias("pct_late_D"),
+        (F.avg(F.col("E_plan_status").eqNullSafe("LATE").cast("int"))).alias("pct_late_E"),
+        (F.avg(F.col("A2_plan_status").eqNullSafe("NO_PLAN").cast("int"))).alias("pct_no_plan_A2"),
+    )
+    .filter(F.col("n_projects") >= 20)   # change threshold here
+)
+
+# Prepare features
+mgr_num = [
+    "med_a2_b","med_b_c","med_c_d","med_d_e",
+    "pct_late_A2","pct_late_B","pct_late_C","pct_late_D","pct_late_E","pct_no_plan_A2"
+]
+
+for c in mgr_num:
+    mgr = mgr.withColumn(c, F.col(c).cast("double"))
+
+imputer = Imputer(inputCols=mgr_num, outputCols=[c+"_imp" for c in mgr_num], strategy="median")
+assembler = VectorAssembler(inputCols=[c+"_imp" for c in mgr_num], outputCol="features_raw", handleInvalid="keep")
+scaler = StandardScaler(inputCol="features_raw", outputCol="features", withMean=True, withStd=True)
+pca = PCA(k=2, inputCol="features", outputCol="pca")
+kmeans = KMeans(k=4, seed=42, featuresCol="features", predictionCol="cluster_manager")
+
+pipe = Pipeline(stages=[imputer, assembler, scaler, pca, kmeans])
+model4 = pipe.fit(mgr)
+mgr_pred = model4.transform(mgr)
+
+# Visuals
+plot_cluster_sizes(mgr_pred, "cluster_manager", "Cluster sizes — Manager archetypes")
+plot_pca_scatter(mgr_pred, "pca", "cluster_manager", "PCA view — Manager clusters")
+
+# Show managers by cluster (example)
+display(mgr_pred.select("pm_clean","n_projects","cluster_manager","med_a2_b","med_d_e","pct_late_C").orderBy("cluster_manager", F.desc("med_d_e")))
