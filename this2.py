@@ -555,7 +555,6 @@ print("Pydantic schema defined: GeneratedSQL")
 
 
 
-
 # Cell 9 - INTENT-BASED prompt (no SQL templates - LLM must reason independently)
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
@@ -576,12 +575,12 @@ SQL dialect: Databricks Spark SQL.
 Table name: investment_projects.
 All columns are stored as STRING - cast explicitly when needed.
 
-Date storage: Date values may appear as DD/MM/YYYY text (e.g. '30/04/2018') or
-ISO text (e.g. '2015-09-10'). Convert dates with to_date(column, 'dd/MM/yyyy')
-before comparing them; the notebook normalizes those calls to tolerant Spark
-parsing that also accepts ISO dates. Use current_date() for today's date; the
-notebook pins it to the run_date widget during execution so report values are
-reproducible.
+Date storage: Profiling of the Databricks dataset shows date values are stored
+primarily as ISO text in yyyy-MM-dd format (e.g. '2015-09-10'), with a small
+number of other nonblank values. Convert dates with to_date(column, 'yyyy-MM-dd')
+before comparing them; the notebook normalizes strict date calls to tolerant
+Spark parsing with fallbacks. Use current_date() for today's date; the notebook
+pins it to the run_date widget during execution so report values are reproducible.
 
 Null sentinel: The value '01/01/1990' in any date column means NULL / not populated.
 Treat it identically to NULL or empty string for all rules that care about missing data.
@@ -673,7 +672,7 @@ adjacent pair. A row violates this rule if ANY pair is out of order (earlier dat
 date, meaning equal dates are also violations). Only compare pairs where BOTH dates are
 populated (not null/blank/sentinel). If even one adjacent pair is out of order, the row
 fails. Do NOT filter by phase unless the rule explicitly specifies `skip_phases`.
-CRITICAL: Each date column must be converted with to_date(column, 'dd/MM/yyyy') before
+CRITICAL: Each date column must be converted with to_date(column, 'yyyy-MM-dd') before
 comparison. Apply the EXACT same date conversion to EVERY column in EVERY pair.
 The notebook normalizes these calls to tolerant Spark parsing at execution time.
 
@@ -700,6 +699,8 @@ chain = prompt | llm | parser
 
 print("Chain ready: PromptTemplate -> GPT-4.1 -> PydanticOutputParser")
 print("Intent-based prompt - no SQL templates")
+
+
 
 
 
