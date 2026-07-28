@@ -695,6 +695,7 @@ print("Pydantic schema defined: GeneratedSQL")
 
 
 # Cell 9 - INTENT-BASED prompt (no SQL templates - LLM must reason independently)
+# Cell 9 - INTENT-BASED prompt (no SQL templates - LLM must reason independently)
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 
@@ -731,6 +732,14 @@ values are handled explicitly rather than crashing the query.
 Output columns: Always SELECT project_number as the first column and
 project_current_phase as the second, followed by the column(s) being checked.
 SELECT only - never generate DDL or DML.
+
+IMPORTANT OUTPUT VALUE RULE:
+- When selecting checked date columns in the SELECT list, return the original source
+  column value as STRING.
+- Do not select parsed DATE expressions such as to_date(...) or try_to_date(...) as
+  the failed field value.
+- Use parsed date expressions only inside WHERE predicates for comparison.
+- If an alias is needed, alias the original source column, not the parsed expression.
 
 CRITICAL SQL FORMATTING RULES:
 - The sql field must contain executable Databricks Spark SQL only.
@@ -1048,6 +1057,9 @@ Rules:
 - Do not include explanatory prose inside the SQL.
 - If the previous SQL contained comments, prose, or was incomplete, regenerate the SQL from scratch.
 - For complex OR conditions, wrap each OR branch in parentheses.
+- For progressive_gate_completeness rules, SELECT every gate column mentioned in
+  phase_to_required_gates using original source column names. Do not return only a
+  computed failed_field CASE expression.
 - Ensure all parentheses, CASE expressions, subqueries, and WHERE predicates are complete.
 
 Rule YAML:
@@ -1127,6 +1139,7 @@ if validation_errors:
     print("\nRules still failing validation:")
     for rule_id, info in validation_errors.items():
         print(f"  {rule_id}: {info['repair_error'][:300]}")
+
 
 
 
