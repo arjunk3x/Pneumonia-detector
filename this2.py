@@ -1,3 +1,87 @@
+from pyspark.sql import functions as F
+from functools import reduce
+
+SENTINEL = "01/01/1990"
+
+def q(col_name):
+    return "`" + col_name.replace("`", "``") + "`"
+
+date_cols = [
+    c for c in investment_projects.columns
+    if "date" in c.lower() or "milestone" in c.lower()
+]
+
+print(f"Found {len(date_cols)} possible date columns:")
+for c in date_cols:
+    print(" -", c)
+
+profiles = []
+
+for c in date_cols:
+    s = F.trim(F.col(q(c)).cast("string"))
+
+    profile = (
+        investment_projects
+        .select(s.alias("v"))
+        .agg(
+            F.lit(c).alias("column_name"),
+            F.count("*").alias("total_rows"),
+            F.sum(F.when(F.col("v").isNull(), 1).otherwise(0)).alias("null_count"),
+            F.sum(F.when(F.col("v") == "", 1).otherwise(0)).alias("blank_count"),
+            F.sum(F.when(F.col("v") == SENTINEL, 1).otherwise(0)).alias("sentinel_count"),
+            F.sum(F.when(F.expr("try_to_date(v, 'dd/MM/yyyy') is not null"), 1).otherwise(0)).alias("dd_MM_yyyy_count"),
+            F.sum(F.when(F.expr("try_to_date(v, 'yyyy-MM-dd') is not null"), 1).otherwise(0)).alias("yyyy_MM_dd_count"),
+            F.sum(F.when(F.expr("try_to_date(v, 'dd-MM-yyyy') is not null"), 1).otherwise(0)).alias("dd_MM_yyyy_dash_count"),
+            F.sum(F.when(F.expr("try_to_date(v, 'yyyy/MM/dd') is not null"), 1).otherwise(0)).alias("yyyy_MM_dd_slash_count"),
+            F.countDistinct("v").alias("distinct_values"),
+        )
+        .withColumn(
+            "unparsed_nonblank_count",
+            F.col("total_rows")
+            - F.col("null_count")
+            - F.col("blank_count")
+            - F.col("dd_MM_yyyy_count")
+            - F.col("yyyy_MM_dd_count")
+            - F.col("dd_MM_yyyy_dash_count")
+            - F.col("yyyy_MM_dd_slash_count")
+        )
+    )
+
+    profiles.append(profile)
+
+date_profile = reduce(lambda a, b: a.unionByName(b), profiles)
+display(date_profile.orderBy("column_name"))
+
+
+
+for c in date_cols:
+    print(f"\n{c}")
+    (
+        investment_projects
+        .select(F.trim(F.col(q(c)).cast("string")).alias("v"))
+        .where("v is not null and v <> ''")
+        .groupBy(
+            F.when(F.col("v").rlike(r"^\d{2}/\d{2}/\d{4}$"), "dd/MM/yyyy")
+             .when(F.col("v").rlike(r"^\d{4}-\d{2}-\d{2}$"), "yyyy-MM-dd")
+             .when(F.col("v").rlike(r"^\d{2}-\d{2}-\d{4}$"), "dd-MM-yyyy")
+             .when(F.col("v").rlike(r"^\d{4}/\d{2}/\d{2}$"), "yyyy/MM/dd")
+             .otherwise("other")
+             .alias("detected_format")
+        )
+        .count()
+        .orderBy("detected_format")
+        .show(truncate=False)
+    )
+
+
+
+
+
+
+
+
+
+
 # Cell 2 - Imports and Databricks helpers
 import os
 import re
