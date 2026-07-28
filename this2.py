@@ -1558,28 +1558,77 @@ RULE_SUMMARY_PATH = f"{OUTPUT_PATH.rstrip('/')}/{RULE_SUMMARY_FILE}"
 
 
 
-from pyspark.sql import functions as F, types as T
+%pip install pyyaml
+import yaml
 from functools import reduce
 from datetime import datetime
+from pyspark.sql import functions as F, types as T
 
 # =========================
-# CONFIG
+# PATHS
 # =========================
 
-OUTPUT_PATH = "dbfs:/tmp/dq_rules_engine_output"
+RULES_PATH = "file:/Workspace/POC DQ Agent/dq-agent-poc/config/rules.yaml"
+INVESTMENT_PROJECTS_PATH = "file:/Workspace/POC DQ Agent/dq-agent-poc/data/oppm/investment_projects 1.csv"
+OUTPUT_PATH = "file:/Workspace/POC DQ Agent/dq-agent-poc/output"
+
 FAIL_REPORT_FILE = "fail_report_20260728_092523.csv"
 RULE_SUMMARY_FILE = "rule_summary_20260728_092523.csv"
 
 FAIL_REPORT_PATH = f"{OUTPUT_PATH.rstrip('/')}/{FAIL_REPORT_FILE}"
 RULE_SUMMARY_PATH = f"{OUTPUT_PATH.rstrip('/')}/{RULE_SUMMARY_FILE}"
 
-print("Reading generated fail report from:", FAIL_REPORT_PATH)
+# =========================
+# LOAD INPUTS
+# =========================
+
+def localize_path(path):
+    if path.startswith("file:"):
+        return path.replace("file:", "", 1)
+    if path.startswith("dbfs:/"):
+        return "/dbfs/" + path.replace("dbfs:/", "", 1).lstrip("/")
+    return path
+
+def read_text_file_any(path):
+    try:
+        with open(localize_path(path), "r", encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return "\n".join(row.value for row in spark.read.text(path).collect())
+
+RULES_CONFIG = yaml.safe_load(read_text_file_any(RULES_PATH))
+RULES = RULES_CONFIG["rules"]
+print(f"Loaded {len(RULES)} rules from {RULES_PATH}")
+
+investment_projects = (
+    spark.read
+    .format("csv")
+    .option("header", "true")
+    .option("encoding", "UTF-8")
+    .option("inferSchema", "false")
+    .option("quote", '"')
+    .option("escape", '"')
+    .option("multiLine", "true")
+    .option("mode", "PERMISSIVE")
+    .option("nullValue", "")
+    .option("emptyValue", "")
+    .load(INVESTMENT_PROJECTS_PATH)
+)
+
+for c in investment_projects.columns:
+    cleaned = c.lstrip("\ufeff")
+    if cleaned != c:
+        investment_projects = investment_projects.withColumnRenamed(c, cleaned)
+
+investment_projects = investment_projects.cache()
+print(f"Loaded investment_projects: {investment_projects.count():,} rows x {len(investment_projects.columns)} cols")
 
 actual_report_raw = (
     spark.read
     .option("header", "true")
     .csv(FAIL_REPORT_PATH)
 )
+print(f"Loaded generated fail report: {actual_report_raw.count():,} rows")
 
 try:
     actual_rule_summary_raw = (
@@ -1587,24 +1636,19 @@ try:
         .option("header", "true")
         .csv(RULE_SUMMARY_PATH)
     )
-except Exception:
+    print(f"Loaded rule summary: {actual_rule_summary_raw.count():,} rows")
+except Exception as e:
     actual_rule_summary_raw = None
-    print("Rule summary file not found or not readable; continuing without it.")
+    print("Rule summary not loaded:", str(e)[:200])
 
 # =========================
-# GROUND TRUTH HELPERS
+# HELPERS
 # =========================
 
 SENTINELS = ["01/01/1990", "1990-01-01"]
 ID_COL = "project_number"
 PHASE_COL = "project_current_phase"
-
-try:
-    AUDIT_RUN_DATE = get_run_date()
-except Exception:
-    AUDIT_RUN_DATE = datetime.now().date()
-
-AUDIT_RUN_DATE_STR = AUDIT_RUN_DATE.strftime("%Y-%m-%d")
+AUDIT_RUN_DATE_STR = "2026-07-28"
 AUDIT_RUN_DATE_COL = F.to_date(F.lit(AUDIT_RUN_DATE_STR))
 
 def q(c):
@@ -1631,10 +1675,7 @@ def params(rule):
 def get_rule_cols(rule):
     p = params(rule)
     for source in [rule, p]:
-        for k in [
-            "columns", "fields", "field", "column",
-            "target_columns", "target_column", "mandatory_fields"
-        ]:
+        for k in ["columns", "fields", "field", "column", "target_columns", "target_column", "mandatory_fields"]:
             if source.get(k) is not None:
                 return as_list(source.get(k))
     return []
@@ -1713,10 +1754,10 @@ def gt_for_rule(rule):
     p = params(rule)
 
     if ct == "not_null":
-        parts = []
-        for c in get_rule_cols(rule):
-            parts.append(mk(df.where(is_missing(c)), rule, F.lit(c), value_str(c)))
-        return parts
+        return [
+            mk(df.where(is_missing(c)), rule, F.lit(c), value_str(c))
+            for c in get_rule_cols(rule)
+        ]
 
     if ct == "positive_value":
         c = get_rule_cols(rule)[0]
@@ -1728,36 +1769,24 @@ def gt_for_rule(rule):
     if ct == "unique":
         c = get_rule_cols(rule)[0]
         skip_null = bool(p.get("skip_null", rule.get("skip_null", False)))
-
         base = df.withColumn("_key", clean(c))
         if skip_null:
             base = base.where(~is_missing(c))
-
-        dups = (
-            base
-            .groupBy("_key")
-            .count()
-            .where(F.col("count") > 1)
-            .select("_key")
-        )
-
+        dups = base.groupBy("_key").count().where(F.col("count") > 1).select("_key")
         return [mk(base.join(dups, "_key", "inner"), rule, F.lit(c), F.col("_key"))]
 
     if ct == "value_in_list":
         c = get_rule_cols(rule)[0]
         allowed = get_allowed_values(rule)
         flag_null = bool(p.get("flag_null", rule.get("flag_null", False)))
-
         cond = ~clean(c).isin(allowed)
         cond = (cond | is_missing(c)) if flag_null else (cond & (~is_missing(c)))
-
         return [mk(df.where(cond), rule, F.lit(c), value_str(c))]
 
     if ct == "active_gate_overdue":
         parts = []
         phase_map = p.get("phase_to_gate_map", {})
         overdue_days = int(p.get("overdue_days", 180))
-
         for phase, gate_col in phase_map.items():
             cond = (
                 (clean(PHASE_COL) == phase)
@@ -1765,79 +1794,50 @@ def gt_for_rule(rule):
                 & (F.datediff(AUDIT_RUN_DATE_COL, dq_date(gate_col)) > overdue_days)
             )
             parts.append(mk(df.where(cond), rule, F.lit(gate_col), value_str(gate_col)))
-
         return parts
 
     if ct == "progressive_gate_completeness":
         parts = []
         phase_map = p.get("phase_to_required_gates", {})
-
         for phase, gates in phase_map.items():
             gates = as_list(gates)
             cond = (clean(PHASE_COL) == phase) & or_all([is_missing(g) for g in gates])
             missing_labels = [F.when(is_missing(g), F.lit(gate_label(g))) for g in gates]
-
-            parts.append(mk(
-                df.where(cond),
-                rule,
-                F.concat_ws(", ", *missing_labels),
-                F.lit("NULL/missing")
-            ))
-
+            parts.append(mk(df.where(cond), rule, F.concat_ws(", ", *missing_labels), F.lit("NULL/missing")))
         return parts
 
     if ct == "completed_gate_not_future":
         parts = []
         phase_map = p.get("phase_to_completed_gates", {})
-
         for phase, gates in phase_map.items():
             gates = as_list(gates)
             cond = (clean(PHASE_COL) == phase) & or_all([
                 is_populated_date(g) & (dq_date(g) > AUDIT_RUN_DATE_COL)
                 for g in gates
             ])
-
-            parts.append(mk(
-                df.where(cond),
-                rule,
-                F.lit("gate_dates"),
-                F.lit("See explanation")
-            ))
-
+            parts.append(mk(df.where(cond), rule, F.lit("gate_dates"), F.lit("See explanation")))
         return parts
 
     if ct == "date_sequence":
         seq = as_list(p.get("sequence") or rule.get("sequence") or get_rule_cols(rule))
-
         pair_conds = [
             is_populated_date(a) & is_populated_date(b) & (dq_date(a) >= dq_date(b))
             for a, b in zip(seq, seq[1:])
         ]
-
-        return [mk(
-            df.where(or_all(pair_conds)),
-            rule,
-            F.lit("date_sequence"),
-            F.lit("See explanation")
-        )]
+        return [mk(df.where(or_all(pair_conds)), rule, F.lit("date_sequence"), F.lit("See explanation"))]
 
     print(f"WARNING: no ground-truth logic for {rule['id']} check_type={ct}")
     return []
 
 # =========================
-# BUILD GROUND TRUTH
+# BUILD REPORTS
 # =========================
 
 gt_parts = []
-
 for rule in RULES:
     gt_parts.extend(gt_for_rule(rule))
 
-ground_truth_report = (
-    reduce(lambda a, b: a.unionByName(b), gt_parts)
-    if gt_parts
-    else spark.createDataFrame([], GT_SCHEMA)
-)
+ground_truth_report = reduce(lambda a, b: a.unionByName(b), gt_parts) if gt_parts else spark.createDataFrame([], GT_SCHEMA)
 
 actual_report = actual_report_raw.select(
     F.col("rule_id").cast("string").alias("rule_id"),
@@ -1853,7 +1853,7 @@ rules_df = spark.createDataFrame(
 )
 
 # =========================
-# SUMMARY COMPARISON
+# COMPARISON
 # =========================
 
 gt_summary = ground_truth_report.groupBy("rule_id").agg(
@@ -1870,12 +1870,7 @@ comparison = (
     rules_df
     .join(gt_summary, "rule_id", "left")
     .join(actual_summary, "rule_id", "left")
-    .fillna(0, subset=[
-        "gt_fail_report_count",
-        "gt_distinct_records",
-        "actual_fail_report_count",
-        "actual_distinct_records",
-    ])
+    .fillna(0)
     .withColumn("count_delta", F.col("actual_fail_report_count") - F.col("gt_fail_report_count"))
     .withColumn("record_delta", F.col("actual_distinct_records") - F.col("gt_distinct_records"))
     .withColumn("count_match", F.col("count_delta") == 0)
@@ -1885,60 +1880,29 @@ comparison = (
 print("GROUND TRUTH VS GENERATED FAIL REPORT")
 display(comparison)
 
-# =========================
-# FALSE POSITIVE / FALSE NEGATIVE RECORDS
-# =========================
-
 gt_record_keys = ground_truth_report.select("rule_id", "record_id").distinct()
 actual_record_keys = actual_report.select("rule_id", "record_id").distinct()
 
-false_negative_records = gt_record_keys.join(
-    actual_record_keys,
-    ["rule_id", "record_id"],
-    "left_anti"
-)
-
-false_positive_records = actual_record_keys.join(
-    gt_record_keys,
-    ["rule_id", "record_id"],
-    "left_anti"
-)
-
-fn_summary = (
-    false_negative_records
-    .groupBy("rule_id")
-    .count()
-    .withColumnRenamed("count", "false_negative_records")
-)
-
-fp_summary = (
-    false_positive_records
-    .groupBy("rule_id")
-    .count()
-    .withColumnRenamed("count", "false_positive_records")
-)
+false_negative_records = gt_record_keys.join(actual_record_keys, ["rule_id", "record_id"], "left_anti")
+false_positive_records = actual_record_keys.join(gt_record_keys, ["rule_id", "record_id"], "left_anti")
 
 mismatch_summary = (
     rules_df
-    .join(fn_summary, "rule_id", "left")
-    .join(fp_summary, "rule_id", "left")
-    .fillna(0, subset=["false_negative_records", "false_positive_records"])
+    .join(false_negative_records.groupBy("rule_id").count().withColumnRenamed("count", "false_negative_records"), "rule_id", "left")
+    .join(false_positive_records.groupBy("rule_id").count().withColumnRenamed("count", "false_positive_records"), "rule_id", "left")
+    .fillna(0)
     .orderBy("rule_id")
 )
 
 print("FALSE POSITIVE / FALSE NEGATIVE RECORD IDS")
 display(mismatch_summary)
 
-# =========================
-# CHECK SAVED DQ SUMMARY FILE
-# =========================
-
 if actual_rule_summary_raw is not None:
     dq_summary_check = (
         comparison
         .join(
             actual_rule_summary_raw.select(
-                F.col("rule_id").cast("string").alias("rule_id"),
+                F.col("rule_id").cast("string"),
                 F.col("violation_count").cast("long").alias("dq_summary_count")
             ),
             "rule_id",
@@ -1948,20 +1912,14 @@ if actual_rule_summary_raw is not None:
         .withColumn("dq_summary_matches_generated_report", F.col("dq_summary_count") == F.col("actual_fail_report_count"))
         .orderBy("rule_id")
     )
-
     print("DQ SUMMARY CHECK")
     display(dq_summary_check)
 
-# =========================
-# SAMPLES FOR DEBUGGING
-# =========================
-
-print("SAMPLE FALSE NEGATIVES: in ground truth, missing from generated report")
+print("SAMPLE FALSE NEGATIVES")
 display(false_negative_records.orderBy("rule_id", "record_id").limit(100))
 
-print("SAMPLE FALSE POSITIVES: in generated report, not in ground truth")
+print("SAMPLE FALSE POSITIVES")
 display(false_positive_records.orderBy("rule_id", "record_id").limit(100))
-
 
 
 
