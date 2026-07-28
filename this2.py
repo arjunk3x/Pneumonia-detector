@@ -284,9 +284,120 @@ print(f"... ({len(investment_projects.columns)} columns total)")
 
 
 # Cell 7 - Spark SQL normalisation for deterministic Databricks execution
+def split_top_level_sql_args(arg_text: str) -> list[str]:
+    args = []
+    start = 0
+    depth = 0
+    quote = None
+    i = 0
+
+    while i < len(arg_text):
+        ch = arg_text[i]
+
+        if quote:
+            if ch == quote:
+                if i + 1 < len(arg_text) and arg_text[i + 1] == quote:
+                    i += 2
+                    continue
+                quote = None
+            i += 1
+            continue
+
+        if ch in ("'", '"', "`"):
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            args.append(arg_text[start:i].strip())
+            start = i + 1
+
+        i += 1
+
+    args.append(arg_text[start:].strip())
+    return args
+
+
+def find_matching_paren(sql: str, open_paren_index: int) -> int:
+    depth = 1
+    quote = None
+    i = open_paren_index + 1
+
+    while i < len(sql):
+        ch = sql[i]
+
+        if quote:
+            if ch == quote:
+                if i + 1 < len(sql) and sql[i + 1] == quote:
+                    i += 2
+                    continue
+                quote = None
+            i += 1
+            continue
+
+        if ch in ("'", '"', "`"):
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+
+        i += 1
+
+    return -1
+
+
+def tolerant_date_expr(expr: str) -> str:
+    return (
+        f"coalesce("
+        f"try_to_date({expr}, 'dd/MM/yyyy'), "
+        f"try_to_date({expr}, 'yyyy-MM-dd'), "
+        f"try_to_date({expr}, 'dd-MM-yyyy'), "
+        f"try_to_date({expr}, 'yyyy/MM/dd')"
+        f")"
+    )
+
+
+def replace_to_date_calls(sql: str) -> str:
+    """Replace strict to_date(expr, fmt) calls with tolerant multi-format parsing."""
+    pieces = []
+    pos = 0
+    pattern = re.compile(r"\bto_date\s*\(", flags=re.IGNORECASE)
+
+    while True:
+        match = pattern.search(sql, pos)
+        if not match:
+            pieces.append(sql[pos:])
+            break
+
+        open_paren = match.end() - 1
+        close_paren = find_matching_paren(sql, open_paren)
+        if close_paren == -1:
+            pieces.append(sql[pos:])
+            break
+
+        inner = sql[open_paren + 1:close_paren]
+        args = split_top_level_sql_args(inner)
+        original = sql[match.start():close_paren + 1]
+
+        pieces.append(sql[pos:match.start()])
+        if len(args) >= 2:
+            pieces.append(tolerant_date_expr(args[0]))
+        else:
+            pieces.append(original)
+
+        pos = close_paren + 1
+
+    return "".join(pieces)
+
+
 def normalize_spark_sql(sql: str) -> str:
     """Keep the LLM SQL Spark-native and pin current_date() to this run's date."""
     s = sql.strip().rstrip(";")
+    s = replace_to_date_calls(s)
     run_date_sql = f"DATE '{get_run_date().strftime('%Y-%m-%d')}'"
     s = re.sub(r"\bcurrent_date\s*\(\s*\)", run_date_sql, s, flags=re.IGNORECASE)
     s = re.sub(r"\bcurrent_date\b", run_date_sql, s, flags=re.IGNORECASE)
@@ -312,6 +423,7 @@ def dedupe_spark_columns(df):
 
 
 print("normalize_spark_sql() ready")
+
 
 
 
@@ -380,10 +492,12 @@ SQL dialect: Databricks Spark SQL.
 Table name: investment_projects.
 All columns are stored as STRING - cast explicitly when needed.
 
-Date storage: All dates are STRING values in DD/MM/YYYY format (e.g. '30/04/2018').
-Convert dates with to_date(column, 'dd/MM/yyyy') before comparing them.
-Use current_date() for today's date; the notebook pins it to the run_date widget
-during execution so report values are reproducible.
+Date storage: Date values may appear as DD/MM/YYYY text (e.g. '30/04/2018') or
+ISO text (e.g. '2015-09-10'). Convert dates with to_date(column, 'dd/MM/yyyy')
+before comparing them; the notebook normalizes those calls to tolerant Spark
+parsing that also accepts ISO dates. Use current_date() for today's date; the
+notebook pins it to the run_date widget during execution so report values are
+reproducible.
 
 Null sentinel: The value '01/01/1990' in any date column means NULL / not populated.
 Treat it identically to NULL or empty string for all rules that care about missing data.
@@ -477,6 +591,7 @@ populated (not null/blank/sentinel). If even one adjacent pair is out of order, 
 fails. Do NOT filter by phase unless the rule explicitly specifies `skip_phases`.
 CRITICAL: Each date column must be converted with to_date(column, 'dd/MM/yyyy') before
 comparison. Apply the EXACT same date conversion to EVERY column in EVERY pair.
+The notebook normalizes these calls to tolerant Spark parsing at execution time.
 
 ------------------------------------------------------------
 
