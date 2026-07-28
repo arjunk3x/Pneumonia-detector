@@ -1,18 +1,135 @@
-import yaml
+from pyspark.sql import functions as F
 
-RULES_PATH = "file:/Workspace/POC DQ Agent/dq-agent-poc/rules.yaml"
+DEBUG_RULE_ID = "DQ006"
+DEBUG_RECORD_ID = "100653-201334"
+SENTINELS_DBG = {"01/01/1990", "1990-01-01"}
 
-def read_text_file_any(path):
-    if path.startswith("file:/Workspace/"):
-        local_path = path.replace("file:", "")
-        with open(local_path, "r", encoding="utf-8") as f:
-            return f.read()
-    return "\n".join(row.value for row in spark.read.text(path).collect())
+def q_dbg(c):
+    return "`" + c.replace("`", "``") + "`"
 
-RULES_CONFIG = yaml.safe_load(read_text_file_any(RULES_PATH))
-RULES = RULES_CONFIG["rules"]
+def clean_dbg(c):
+    return F.trim(F.col(q_dbg(c)).cast("string"))
 
-print(f"Loaded {len(RULES)} rules from {RULES_PATH}")
+def show_df(title, df, n=20):
+    print("\n" + "=" * 100)
+    print(title)
+    print("=" * 100)
+    display(df.limit(n))
+
+rule_meta_dbg = next(r for r in RULES if r["id"] == DEBUG_RULE_ID)
+params_dbg = rule_meta_dbg.get("parameters", {}) or {}
+phase_map_dbg = params_dbg.get("phase_to_required_gates", {})
+
+print("RULE META")
+print(rule_meta_dbg)
+
+# 1. Source row from investment_projects
+source_row_dbg = (
+    investment_projects
+    .where(clean_dbg("project_number") == DEBUG_RECORD_ID)
+)
+
+show_df("SOURCE ROW FROM investment_projects", source_row_dbg)
+
+source_rows = source_row_dbg.collect()
+if not source_rows:
+    print(f"ERROR: record_id {DEBUG_RECORD_ID} not found in investment_projects")
+else:
+    source_dict = source_rows[0].asDict(recursive=True)
+    phase_dbg = str(source_dict.get("project_current_phase", "UNKNOWN"))
+
+    required_gates_dbg = phase_map_dbg.get(phase_dbg, [])
+    print("\nPHASE FROM SOURCE:", phase_dbg)
+    print("REQUIRED GATES FROM RULE YAML:", required_gates_dbg)
+
+    print("\nSOURCE REQUIRED GATE VALUES")
+    for gate in required_gates_dbg:
+        v = source_dict.get(gate, None)
+        v_str = "NULL" if v is None else str(v).strip()
+        is_missing = v is None or v_str == "" or v_str in SENTINELS_DBG
+        print(f"{gate}: {repr(v)} | normalized={v_str} | missing={is_missing}")
+
+# 2. Generated SQL metadata
+print("\nGENERATED SQL META")
+if "generated_queries" in globals() and DEBUG_RULE_ID in generated_queries:
+    gen_dbg = generated_queries[DEBUG_RULE_ID]
+    print("failed_field:", gen_dbg.failed_field)
+    print("explanation:", gen_dbg.explanation)
+    print("\nSQL:")
+    print(gen_dbg.sql)
+else:
+    print("generated_queries not available in this notebook/session.")
+
+# 3. Execution result row from LLM SQL
+if "execution_results" in globals() and DEBUG_RULE_ID in execution_results:
+    exec_df_dbg = execution_results[DEBUG_RULE_ID]
+    print("\nEXECUTION RESULT COLUMNS:")
+    print(exec_df_dbg.columns)
+
+    exec_row_dbg = (
+        exec_df_dbg
+        .where(F.trim(F.col("project_number").cast("string")) == DEBUG_RECORD_ID)
+    )
+
+    show_df("DQ006 ROW RETURNED BY LLM SQL / execution_results", exec_row_dbg)
+
+    exec_rows = exec_row_dbg.collect()
+    if exec_rows:
+        exec_dict = exec_rows[0].asDict(recursive=True)
+
+        print("\nCELL 14 SIMULATION USING execution_results ROW")
+        exec_phase = str(exec_dict.get("project_current_phase", "UNKNOWN"))
+        exec_required_gates = phase_map_dbg.get(exec_phase, [])
+
+        print("phase from execution row:", exec_phase)
+        print("required gates:", exec_required_gates)
+
+        for gate in exec_required_gates:
+            v = exec_dict.get(gate, None)
+            v_str = "NULL" if v is None else str(v).strip()
+            is_missing = v is None or v_str == "" or v_str in SENTINELS_DBG
+            print(
+                f"{gate}: present_in_exec={gate in exec_dict} | "
+                f"value={repr(v)} | normalized={v_str} | missing={is_missing}"
+            )
+
+        simulated_missing = []
+        for gate in exec_required_gates:
+            v = exec_dict.get(gate, None)
+            v_str = "NULL" if v is None else str(v).strip()
+            if v is None or v_str == "" or v_str in SENTINELS_DBG:
+                simulated_missing.append(
+                    gate.replace("project_gate_", "GATE ")
+                        .replace("_milestone_date", "")
+                        .upper()
+                )
+
+        print("\nSIMULATED CELL 14 MISSING GATES:", simulated_missing)
+    else:
+        print("Record not found in DQ006 execution_results.")
+else:
+    print("\nexecution_results not available. If you only have saved files, rerun Cells 10-12 first.")
+
+# 4. Fail report row
+if "fail_report" in globals():
+    fail_df_dbg = fail_report
+else:
+    # If fresh notebook, load the CSV path you used before
+    FAIL_REPORT_PATH_DBG = "file:/Workspace/POC DQ Agent/dq-agent-poc/output/fail_report_20260728_092523.csv"
+    fail_df_dbg = spark.read.option("header", "true").csv(FAIL_REPORT_PATH_DBG)
+
+fail_row_dbg = (
+    fail_df_dbg
+    .where((F.col("rule_id") == DEBUG_RULE_ID) & (F.col("record_id") == DEBUG_RECORD_ID))
+)
+
+show_df("DQ006 ROW IN fail_report", fail_row_dbg)
+
+print("\nFAIL REPORT EXPLANATION")
+for r in fail_row_dbg.select("failed_field", "failed_value", "explanation").collect():
+    print("failed_field:", r["failed_field"])
+    print("failed_value:", r["failed_value"])
+    print("explanation:", r["explanation"])
 
 
 
