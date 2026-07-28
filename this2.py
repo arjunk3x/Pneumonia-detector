@@ -1,29 +1,18 @@
-rule_id = "DQ008"
+import yaml
 
-gen = generated_queries[rule_id]
-sql_spark = normalize_spark_sql(gen.sql)
+RULES_PATH = "file:/Workspace/POC DQ Agent/dq-agent-poc/rules.yaml"
 
-print("Rule:", rule_id)
-print("SQL length:", len(sql_spark))
-print("\n--- SQL START ---")
-print(sql_spark[:2000])
-print("--- SQL END PART ---")
-print(sql_spark[-2000:])
+def read_text_file_any(path):
+    if path.startswith("file:/Workspace/"):
+        local_path = path.replace("file:", "")
+        with open(local_path, "r", encoding="utf-8") as f:
+            return f.read()
+    return "\n".join(row.value for row in spark.read.text(path).collect())
 
-try:
-    spark.sql(sql_spark).limit(1).collect()
-    print("SQL OK")
-except Exception as e:
-    import re
-    print(type(e).__name__)
-    print(str(e)[:2000])
+RULES_CONFIG = yaml.safe_load(read_text_file_any(RULES_PATH))
+RULES = RULES_CONFIG["rules"]
 
-    m = re.search(r"pos\s+(\d+)", str(e))
-    if m:
-        pos = int(m.group(1))
-        print("\n--- ERROR CONTEXT ---")
-        print(sql_spark[max(0, pos - 500): pos + 500])
-
+print(f"Loaded {len(RULES)} rules from {RULES_PATH}")
 
 
 
