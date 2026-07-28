@@ -577,7 +577,6 @@ print("Pydantic schema defined: GeneratedSQL")
 
 
 
-
 # Cell 9 - INTENT-BASED prompt (no SQL templates - LLM must reason independently)
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
@@ -1097,6 +1096,8 @@ timestamp = get_widget("run_timestamp_utc", "") or datetime.utcnow().isoformat()
 RUN_DATE = get_run_date()
 today_str = RUN_DATE.strftime("%Y-%m-%d")
 SENTINEL = "01/01/1990"
+SENTINEL_ISO = "1990-01-01"
+SENTINELS = {SENTINEL, SENTINEL_ISO}
 IDENTIFIER_COLS = {"project_number", "project_current_phase"}
 
 
@@ -1108,6 +1109,10 @@ def display_value(value) -> str:
     return "NULL" if is_missing_value(value) else str(value)
 
 
+def is_sentinel_value(value) -> bool:
+    return display_value(value).strip() in SENTINELS
+
+
 def parse_dq_date(value) -> date:
     if isinstance(value, datetime):
         return value.date()
@@ -1115,7 +1120,7 @@ def parse_dq_date(value) -> date:
         return value
 
     text = str(value).strip()
-    for fmt in ("%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y", "%Y/%m/%d"):
+    for fmt in ("%Y-%m-%d", "%d/%m/%Y", "%d-%m-%Y", "%Y/%m/%d"):
         try:
             return datetime.strptime(text[:10], fmt).date()
         except ValueError:
@@ -1206,11 +1211,11 @@ for rule_id, result_df in execution_results.items():
                 val_str = display_value(val)
                 is_null = is_missing_value(val)
                 is_empty = isinstance(val, str) and val.strip() == ""
-                is_sent = val_str == SENTINEL
+                is_sent = val_str.strip() in SENTINELS
 
                 if is_null or is_empty or is_sent:
                     found = "NULL" if is_null else (
-                        "blank/empty" if is_empty else f"sentinel date ({SENTINEL})"
+                        "blank/empty" if is_empty else f"sentinel date ({val_str})"
                     )
 
                     fail_records.append({
@@ -1281,7 +1286,7 @@ for rule_id, result_df in execution_results.items():
                     fallback_col = check_cols[0] if check_cols else None
                     val = row_dict.get(fallback_col, None) if fallback_col else None
 
-                if not is_missing_value(val) and str(val).strip() not in ("", SENTINEL):
+                if not is_missing_value(val) and str(val).strip() != "" and not is_sentinel_value(val):
                     try:
                         gate_date = parse_dq_date(val)
                         days_diff = (RUN_DATE - gate_date).days
@@ -1319,7 +1324,7 @@ for rule_id, result_df in execution_results.items():
             for gate_col in required_gates:
                 val = row_dict.get(gate_col, None)
 
-                if is_missing_value(val) or str(val).strip() in ("", SENTINEL):
+                if is_missing_value(val) or str(val).strip() == "" or is_sentinel_value(val):
                     missing_gates.append(gate_label(gate_col))
 
             if missing_gates:
@@ -1344,7 +1349,7 @@ for rule_id, result_df in execution_results.items():
             for gate_col in completed_gates:
                 val = row_dict.get(gate_col, None)
 
-                if is_missing_value(val) or str(val).strip() in ("", SENTINEL):
+                if is_missing_value(val) or str(val).strip() == "" or is_sentinel_value(val):
                     continue
 
                 try:
@@ -1385,7 +1390,7 @@ for rule_id, result_df in execution_results.items():
 
                 sa, sb = str(val_a).strip(), str(val_b).strip()
 
-                if sa in ("", SENTINEL) or sb in ("", SENTINEL):
+                if sa == "" or sb == "" or sa in SENTINELS or sb in SENTINELS:
                     continue
 
                 try:
@@ -1508,6 +1513,7 @@ print(f"   rule_summary_{run_ts}.csv        ({rule_summary.count()} rules)")
 print(f"   generated_sql_{run_ts}.yaml")
 print(f"   execution_results_{run_ts}/      (Parquet by rule)")
 print(f"   rules_{run_ts}.yaml")
+
 
 
 
