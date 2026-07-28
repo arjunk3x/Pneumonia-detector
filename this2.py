@@ -720,6 +720,7 @@ print("Intent-based prompt - no SQL templates")
 
 
 # Cell 10 — Generate SQL for each rule
+# Cell 10 — Generate SQL for each rule
 rule_lookup = {r["id"]: r for r in RULES}
 generated_queries = {}
 
@@ -735,6 +736,7 @@ for rule in RULES:
         print(f"  ✗ {rule['id']:6} — ERROR: {type(e).__name__}: {str(e)[:80]}")
 
 print(f"\nGenerated: {len(generated_queries)}/{len(RULES)}")
+
 
 
 
