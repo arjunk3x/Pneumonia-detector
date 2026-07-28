@@ -756,6 +756,7 @@ print(f"\nGenerated: {len(generated_queries)}/{len(RULES)}")
 
 
 # Cell 11 - Validate Spark SQL (test on a small Spark DataFrame)
+# Cell 11 - Validate Spark SQL (test on a small Spark DataFrame)
 validated_queries = {}
 
 print("Validating SQL...\n")
@@ -774,6 +775,7 @@ for rule_id, gen in generated_queries.items():
 investment_projects.createOrReplaceTempView("investment_projects")
 
 print(f"\nValidated: {len(validated_queries)}/{len(generated_queries)}")
+
 
 
 
