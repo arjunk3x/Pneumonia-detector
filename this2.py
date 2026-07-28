@@ -627,6 +627,14 @@ Output columns: Always SELECT project_number as the first column and
 project_current_phase as the second, followed by the column(s) being checked.
 SELECT only - never generate DDL or DML.
 
+CRITICAL SQL FORMATTING RULES:
+- The sql field must contain executable Databricks Spark SQL only.
+- Do not include SQL comments such as -- or /* */ anywhere in the SQL.
+- Do not include explanatory prose inside the SQL.
+- Do not include markdown fences.
+- Do not leave any parenthesis, CASE expression, subquery, or WHERE clause incomplete.
+- For complex OR conditions, wrap each OR branch in parentheses.
+
 ------------------------------------------------------------
 DATA QUALITY CHECK TYPES - BUSINESS INTENT & EXPECTED BEHAVIOUR
 ------------------------------------------------------------
@@ -886,136 +894,6 @@ validated_queries = {}
 validation_errors = {}
 
 
-def sql_literal(value) -> str:
-    return "'" + str(value).replace("'", "''") + "'"
-
-
-def dq_date_sql(column_name: str) -> str:
-    col_expr = quote_spark_identifier(column_name)
-    date_text = f"substring(trim(cast({col_expr} as string)), 1, 10)"
-    return (
-        f"coalesce("
-        f"try_to_date({date_text}, 'yyyy-MM-dd'), "
-        f"try_to_date({date_text}, 'dd/MM/yyyy'), "
-        f"try_to_date({date_text}, 'dd-MM-yyyy'), "
-        f"try_to_date({date_text}, 'yyyy/MM/dd')"
-        f")"
-    )
-
-
-def populated_date_sql(column_name: str) -> str:
-    col_expr = quote_spark_identifier(column_name)
-    text_expr = f"trim(cast({col_expr} as string))"
-    date_expr = dq_date_sql(column_name)
-    return (
-        f"{col_expr} IS NOT NULL "
-        f"AND {text_expr} <> '' "
-        f"AND {text_expr} <> '01/01/1990' "
-        f"AND {date_expr} IS NOT NULL"
-    )
-
-
-def as_list(value):
-    if value is None:
-        return []
-    if isinstance(value, list):
-        return value
-    if isinstance(value, tuple):
-        return list(value)
-    return [v.strip() for v in str(value).split(",") if v.strip()]
-
-
-def infer_date_sequence_from_sql(sql: str) -> list[str]:
-    found = re.findall(r"\bproject_gate_[a-z0-9]+_milestone_date\b", sql, flags=re.IGNORECASE)
-    ordered = []
-    for col_name in found:
-        if col_name not in ordered:
-            ordered.append(col_name)
-    return ordered
-
-
-def get_rule_sequence(rule_meta: dict, gen: GeneratedSQL) -> list[str]:
-    params = rule_meta.get("parameters", {})
-    sequence = (
-        params.get("sequence")
-        or params.get("date_sequence")
-        or params.get("columns")
-        or rule_meta.get("sequence")
-        or rule_meta.get("columns")
-        or rule_meta.get("fields")
-    )
-
-    sequence = as_list(sequence)
-    if not sequence and gen.failed_field and gen.failed_field != "date_sequence":
-        sequence = as_list(gen.failed_field)
-
-    if len(sequence) < 2:
-        sequence = infer_date_sequence_from_sql(gen.sql)
-
-    if len(sequence) < 2 and rule_meta.get("id") == "DQ008":
-        sequence = [
-            "project_gate_a2_milestone_date",
-            "project_gate_b_milestone_date",
-            "project_gate_c_milestone_date",
-            "project_gate_d_milestone_date",
-            "project_gate_e_milestone_date",
-        ]
-
-    return sequence
-
-
-def build_date_sequence_sql(rule_id: str, gen: GeneratedSQL) -> GeneratedSQL:
-    rule_meta = rule_lookup.get(rule_id, {"id": rule_id})
-    params = rule_meta.get("parameters", {})
-    sequence = get_rule_sequence(rule_meta, gen)
-
-    if len(sequence) < 2:
-        raise ValueError(f"Cannot build date_sequence SQL for {rule_id}: no usable sequence found")
-
-    skip_phases = as_list(params.get("skip_phases") or rule_meta.get("skip_phases"))
-
-    select_cols = ["project_number", "project_current_phase"]
-    for col_name in sequence:
-        if col_name not in select_cols:
-            select_cols.append(col_name)
-
-    pair_clauses = []
-    for left_col, right_col in zip(sequence, sequence[1:]):
-        left_date = dq_date_sql(left_col)
-        right_date = dq_date_sql(right_col)
-        pair_clauses.append(
-            "("
-            f"{populated_date_sql(left_col)} "
-            f"AND {populated_date_sql(right_col)} "
-            f"AND {left_date} >= {right_date}"
-            ")"
-        )
-
-    where_parts = []
-    if skip_phases:
-        skip_values = ", ".join(sql_literal(v) for v in skip_phases)
-        where_parts.append(f"coalesce(`project_current_phase`, '') NOT IN ({skip_values})")
-
-    where_parts.append("(\n        " + "\n        OR ".join(pair_clauses) + "\n    )")
-
-    sql = (
-        "SELECT "
-        + ", ".join(quote_spark_identifier(c) for c in select_cols)
-        + "\nFROM investment_projects\nWHERE "
-        + "\n  AND ".join(where_parts)
-    )
-
-    return GeneratedSQL(
-        rule_id=rule_id,
-        sql=sql,
-        explanation=(
-            "Flags rows where adjacent project gate milestone dates are populated "
-            "but not in strictly increasing chronological order."
-        ),
-        failed_field=", ".join(sequence),
-    )
-
-
 def print_sql_error_context(rule_id: str, sql_spark: str, error: Exception) -> None:
     msg = str(error)
     print(f"\n--- SQL debug for {rule_id} ---")
@@ -1060,6 +938,11 @@ Rules:
 - Always select project_number first and project_current_phase second.
 - Use table name investment_projects.
 - Dates are primarily yyyy-MM-dd strings. Use to_date(column, 'yyyy-MM-dd') for date comparisons.
+- The sql value must be executable SQL only.
+- Do not include SQL comments such as -- or /* */ anywhere in the SQL.
+- Do not include explanatory prose inside the SQL.
+- If the previous SQL contained comments, prose, or was incomplete, regenerate the SQL from scratch.
+- For complex OR conditions, wrap each OR branch in parentheses.
 - Ensure all parentheses, CASE expressions, subqueries, and WHERE predicates are complete.
 
 Rule YAML:
@@ -1096,30 +979,40 @@ for rule_id, gen in generated_queries.items():
         validated_queries[rule_id] = gen
         print(f"  OK {rule_id:6}")
     except Exception as e:
-        try:
-            failed_sql = normalize_spark_sql(gen.sql)
-            print_sql_error_context(rule_id, failed_sql, e)
+        current_gen = gen
+        current_error = e
+        repaired = False
 
-            rule_meta = rule_lookup.get(rule_id, {"id": rule_id})
-            inferred_sequence = infer_date_sequence_from_sql(gen.sql)
-            if rule_meta.get("check_type", "") == "date_sequence" or rule_id == "DQ008" or len(inferred_sequence) >= 2:
-                print(f"  retry {rule_id:6} - using deterministic date_sequence SQL")
-                repaired_gen = build_date_sequence_sql(rule_id, gen)
-            else:
-                print(f"  retry {rule_id:6} - repairing Spark SQL validation error")
-                repaired_gen = repair_generated_sql_for_spark(rule_id, gen, e)
+        failed_sql = normalize_spark_sql(current_gen.sql)
+        print_sql_error_context(rule_id, failed_sql, current_error)
 
-            validate_spark_sql(repaired_gen.sql)
-            generated_queries[rule_id] = repaired_gen
-            validated_queries[rule_id] = repaired_gen
-            print(f"  OK {rule_id:6} - repaired")
-        except Exception as retry_error:
+        for attempt in range(1, 3):
+            print(f"  retry {rule_id:6} - LLM Spark SQL repair attempt {attempt}")
+            repaired_gen = None
+            try:
+                repaired_gen = repair_generated_sql_for_spark(rule_id, current_gen, current_error)
+                validate_spark_sql(repaired_gen.sql)
+                generated_queries[rule_id] = repaired_gen
+                validated_queries[rule_id] = repaired_gen
+                repaired = True
+                print(f"  OK {rule_id:6} - repaired by LLM")
+                break
+            except Exception as retry_error:
+                current_gen = repaired_gen if repaired_gen is not None else current_gen
+                current_error = retry_error
+                try:
+                    failed_sql = normalize_spark_sql(current_gen.sql)
+                    print_sql_error_context(rule_id, failed_sql, current_error)
+                except Exception:
+                    pass
+
+        if not repaired:
             validation_errors[rule_id] = {
                 "original_error": str(e),
-                "repair_error": str(retry_error),
-                "sql": gen.sql,
+                "repair_error": str(current_error),
+                "sql": current_gen.sql,
             }
-            print(f"  ERR {rule_id:6} - {str(retry_error)[:160]}")
+            print(f"  ERR {rule_id:6} - {str(current_error)[:160]}")
 
 investment_projects.createOrReplaceTempView("investment_projects")
 
@@ -1129,6 +1022,7 @@ if validation_errors:
     print("\nRules still failing validation:")
     for rule_id, info in validation_errors.items():
         print(f"  {rule_id}: {info['repair_error'][:300]}")
+
 
 
 
