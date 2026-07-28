@@ -1,3 +1,37 @@
+rule_id = "DQ008"
+
+gen = generated_queries[rule_id]
+sql_spark = normalize_spark_sql(gen.sql)
+
+print("Rule:", rule_id)
+print("SQL length:", len(sql_spark))
+print("\n--- SQL START ---")
+print(sql_spark[:2000])
+print("--- SQL END PART ---")
+print(sql_spark[-2000:])
+
+try:
+    spark.sql(sql_spark).limit(1).collect()
+    print("SQL OK")
+except Exception as e:
+    import re
+    print(type(e).__name__)
+    print(str(e)[:2000])
+
+    m = re.search(r"pos\s+(\d+)", str(e))
+    if m:
+        pos = int(m.group(1))
+        print("\n--- ERROR CONTEXT ---")
+        print(sql_spark[max(0, pos - 500): pos + 500])
+
+
+
+
+
+
+
+
+
 from pyspark.sql import functions as F
 from functools import reduce
 
