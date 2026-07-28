@@ -753,21 +753,112 @@ print("Intent-based prompt - no SQL templates")
 
 
 
-# Cell 10 — Generate SQL for each rule
-# Cell 10 — Generate SQL for each rule
+# Cell 10 - Generate SQL for each rule
+import json
+
 rule_lookup = {r["id"]: r for r in RULES}
 generated_queries = {}
+raw_generated_outputs = {}
+
+
+def extract_json_object(text: str) -> str:
+    """Extract the first complete JSON object from an LLM response."""
+    text = str(text).strip()
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```$", "", text)
+
+    start = text.find("{")
+    if start == -1:
+        raise ValueError("No JSON object found in model response")
+
+    depth = 0
+    quote = None
+    escape = False
+
+    for i in range(start, len(text)):
+        ch = text[i]
+
+        if quote:
+            if escape:
+                escape = False
+            elif ch == "\\":
+                escape = True
+            elif ch == quote:
+                quote = None
+            continue
+
+        if ch in ("'", '"'):
+            quote = ch
+        elif ch == "{":
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0:
+                return text[start:i + 1]
+
+    raise ValueError("JSON object was not closed in model response")
+
+
+def parse_generated_sql_response(text: str) -> GeneratedSQL:
+    try:
+        return parser.parse(text)
+    except Exception:
+        json_text = extract_json_object(text)
+        data = json.loads(json_text)
+        return GeneratedSQL(**data)
+
+
+def repair_generated_sql_response(rule_id: str, bad_text: str, parse_error: Exception) -> GeneratedSQL:
+    repair_prompt = f"""
+You returned a malformed response for rule {rule_id}.
+
+Convert the response below into one valid JSON object matching exactly this schema:
+{{
+  "rule_id": "{rule_id}",
+  "sql": "Spark SQL SELECT query returning violating rows",
+  "explanation": "brief explanation",
+  "failed_field": "primary checked field or comma-separated fields"
+}}
+
+Rules:
+- Return JSON only.
+- Keep the SQL logic the same.
+- Escape all quotes and newlines inside JSON strings.
+- Do not wrap the JSON in markdown.
+
+Parse error:
+{type(parse_error).__name__}: {str(parse_error)[:1000]}
+
+Malformed response:
+{bad_text[:8000]}
+"""
+    repaired = llm.invoke(repair_prompt)
+    repaired_text = repaired.content if hasattr(repaired, "content") else str(repaired)
+    return parse_generated_sql_response(repaired_text)
+
+
+raw_chain = prompt | llm
 
 print("Generating SQL for each rule...\n")
 
 for rule in RULES:
     try:
         rule_str = yaml.dump(rule, sort_keys=False, default_flow_style=False)
-        result = chain.invoke({"rule": rule_str, "schema": TABLE_SCHEMA})
+        raw_result = raw_chain.invoke({"rule": rule_str, "schema": TABLE_SCHEMA})
+        raw_text = raw_result.content if hasattr(raw_result, "content") else str(raw_result)
+        raw_generated_outputs[rule["id"]] = raw_text
+
+        try:
+            result = parse_generated_sql_response(raw_text)
+        except Exception as parse_error:
+            print(f"  retry {rule['id']:6} - repairing malformed structured output")
+            result = repair_generated_sql_response(rule["id"], raw_text, parse_error)
+
         generated_queries[rule["id"]] = result
-        print(f"  ✓ {rule['id']:6} — {result.explanation[:70]}")
+        print(f"  OK {rule['id']:6} - {result.explanation[:70]}")
     except Exception as e:
-        print(f"  ✗ {rule['id']:6} — ERROR: {type(e).__name__}: {str(e)[:80]}")
+        print(f"  ERR {rule['id']:6} - ERROR: {type(e).__name__}: {str(e)[:120]}")
 
 print(f"\nGenerated: {len(generated_queries)}/{len(RULES)}")
 
@@ -789,9 +880,211 @@ print(f"\nGenerated: {len(generated_queries)}/{len(RULES)}")
 
 
 
-# Cell 11 - Validate Spark SQL (test on a small Spark DataFrame)
+
 # Cell 11 - Validate Spark SQL (test on a small Spark DataFrame)
 validated_queries = {}
+validation_errors = {}
+
+
+def sql_literal(value) -> str:
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def dq_date_sql(column_name: str) -> str:
+    col_expr = quote_spark_identifier(column_name)
+    date_text = f"substring(trim(cast({col_expr} as string)), 1, 10)"
+    return (
+        f"coalesce("
+        f"try_to_date({date_text}, 'yyyy-MM-dd'), "
+        f"try_to_date({date_text}, 'dd/MM/yyyy'), "
+        f"try_to_date({date_text}, 'dd-MM-yyyy'), "
+        f"try_to_date({date_text}, 'yyyy/MM/dd')"
+        f")"
+    )
+
+
+def populated_date_sql(column_name: str) -> str:
+    col_expr = quote_spark_identifier(column_name)
+    text_expr = f"trim(cast({col_expr} as string))"
+    date_expr = dq_date_sql(column_name)
+    return (
+        f"{col_expr} IS NOT NULL "
+        f"AND {text_expr} <> '' "
+        f"AND {text_expr} <> '01/01/1990' "
+        f"AND {date_expr} IS NOT NULL"
+    )
+
+
+def as_list(value):
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return value
+    if isinstance(value, tuple):
+        return list(value)
+    return [v.strip() for v in str(value).split(",") if v.strip()]
+
+
+def infer_date_sequence_from_sql(sql: str) -> list[str]:
+    found = re.findall(r"\bproject_gate_[a-z0-9]+_milestone_date\b", sql, flags=re.IGNORECASE)
+    ordered = []
+    for col_name in found:
+        if col_name not in ordered:
+            ordered.append(col_name)
+    return ordered
+
+
+def get_rule_sequence(rule_meta: dict, gen: GeneratedSQL) -> list[str]:
+    params = rule_meta.get("parameters", {})
+    sequence = (
+        params.get("sequence")
+        or params.get("date_sequence")
+        or params.get("columns")
+        or rule_meta.get("sequence")
+        or rule_meta.get("columns")
+        or rule_meta.get("fields")
+    )
+
+    sequence = as_list(sequence)
+    if not sequence and gen.failed_field and gen.failed_field != "date_sequence":
+        sequence = as_list(gen.failed_field)
+
+    if len(sequence) < 2:
+        sequence = infer_date_sequence_from_sql(gen.sql)
+
+    if len(sequence) < 2 and rule_meta.get("id") == "DQ008":
+        sequence = [
+            "project_gate_a2_milestone_date",
+            "project_gate_b_milestone_date",
+            "project_gate_c_milestone_date",
+            "project_gate_d_milestone_date",
+            "project_gate_e_milestone_date",
+        ]
+
+    return sequence
+
+
+def build_date_sequence_sql(rule_id: str, gen: GeneratedSQL) -> GeneratedSQL:
+    rule_meta = rule_lookup.get(rule_id, {"id": rule_id})
+    params = rule_meta.get("parameters", {})
+    sequence = get_rule_sequence(rule_meta, gen)
+
+    if len(sequence) < 2:
+        raise ValueError(f"Cannot build date_sequence SQL for {rule_id}: no usable sequence found")
+
+    skip_phases = as_list(params.get("skip_phases") or rule_meta.get("skip_phases"))
+
+    select_cols = ["project_number", "project_current_phase"]
+    for col_name in sequence:
+        if col_name not in select_cols:
+            select_cols.append(col_name)
+
+    pair_clauses = []
+    for left_col, right_col in zip(sequence, sequence[1:]):
+        left_date = dq_date_sql(left_col)
+        right_date = dq_date_sql(right_col)
+        pair_clauses.append(
+            "("
+            f"{populated_date_sql(left_col)} "
+            f"AND {populated_date_sql(right_col)} "
+            f"AND {left_date} >= {right_date}"
+            ")"
+        )
+
+    where_parts = []
+    if skip_phases:
+        skip_values = ", ".join(sql_literal(v) for v in skip_phases)
+        where_parts.append(f"coalesce(`project_current_phase`, '') NOT IN ({skip_values})")
+
+    where_parts.append("(\n        " + "\n        OR ".join(pair_clauses) + "\n    )")
+
+    sql = (
+        "SELECT "
+        + ", ".join(quote_spark_identifier(c) for c in select_cols)
+        + "\nFROM investment_projects\nWHERE "
+        + "\n  AND ".join(where_parts)
+    )
+
+    return GeneratedSQL(
+        rule_id=rule_id,
+        sql=sql,
+        explanation=(
+            "Flags rows where adjacent project gate milestone dates are populated "
+            "but not in strictly increasing chronological order."
+        ),
+        failed_field=", ".join(sequence),
+    )
+
+
+def print_sql_error_context(rule_id: str, sql_spark: str, error: Exception) -> None:
+    msg = str(error)
+    print(f"\n--- SQL debug for {rule_id} ---")
+    print(f"SQL length: {len(sql_spark)}")
+    pos_match = re.search(r"pos\s+(\d+)", msg, flags=re.IGNORECASE)
+    if pos_match:
+        pos = int(pos_match.group(1))
+        start = max(0, pos - 500)
+        end = min(len(sql_spark), pos + 500)
+        print(f"Spark error position: {pos}")
+        print(sql_spark[start:end])
+    else:
+        print(sql_spark[:4000])
+    print("--- end SQL debug ---\n")
+
+
+def validate_spark_sql(sql: str) -> str:
+    sql_spark = normalize_spark_sql(sql)
+    spark.sql(sql_spark).limit(1).collect()
+    return sql_spark
+
+
+def repair_generated_sql_for_spark(rule_id: str, gen: GeneratedSQL, spark_error: Exception) -> GeneratedSQL:
+    rule_meta = rule_lookup.get(rule_id, {"id": rule_id})
+    rule_str = yaml.dump(rule_meta, sort_keys=False, default_flow_style=False)
+
+    repair_prompt = f"""
+The Spark SQL generated for rule {rule_id} failed Databricks validation.
+
+Return one valid JSON object matching exactly this schema:
+{{
+  "rule_id": "{rule_id}",
+  "sql": "corrected Databricks Spark SQL SELECT query returning violating rows",
+  "explanation": "brief explanation",
+  "failed_field": "primary checked field or comma-separated fields"
+}}
+
+Rules:
+- Return JSON only.
+- SELECT only. No DDL, no DML, no markdown.
+- Keep the same data-quality business logic.
+- Always select project_number first and project_current_phase second.
+- Use table name investment_projects.
+- Dates are primarily yyyy-MM-dd strings. Use to_date(column, 'yyyy-MM-dd') for date comparisons.
+- Ensure all parentheses, CASE expressions, subqueries, and WHERE predicates are complete.
+
+Rule YAML:
+{rule_str}
+
+Original explanation:
+{gen.explanation}
+
+Original failed_field:
+{gen.failed_field}
+
+Databricks Spark parser/analyzer error:
+{type(spark_error).__name__}: {str(spark_error)[:4000]}
+
+Invalid SQL:
+{gen.sql[:12000]}
+"""
+    repaired = llm.invoke(repair_prompt)
+    repaired_text = repaired.content if hasattr(repaired, "content") else str(repaired)
+    repaired_gen = parse_generated_sql_response(repaired_text)
+
+    if repaired_gen.rule_id != rule_id:
+        repaired_gen.rule_id = rule_id
+
+    return repaired_gen
 
 print("Validating SQL...\n")
 
@@ -799,16 +1092,44 @@ investment_projects.limit(10).createOrReplaceTempView("investment_projects")
 
 for rule_id, gen in generated_queries.items():
     try:
-        sql_spark = normalize_spark_sql(gen.sql)
-        spark.sql(sql_spark).limit(1).collect()
+        validate_spark_sql(gen.sql)
         validated_queries[rule_id] = gen
         print(f"  OK {rule_id:6}")
     except Exception as e:
-        print(f"  ERR {rule_id:6} - {str(e)[:100]}")
+        try:
+            failed_sql = normalize_spark_sql(gen.sql)
+            print_sql_error_context(rule_id, failed_sql, e)
+
+            rule_meta = rule_lookup.get(rule_id, {"id": rule_id})
+            inferred_sequence = infer_date_sequence_from_sql(gen.sql)
+            if rule_meta.get("check_type", "") == "date_sequence" or rule_id == "DQ008" or len(inferred_sequence) >= 2:
+                print(f"  retry {rule_id:6} - using deterministic date_sequence SQL")
+                repaired_gen = build_date_sequence_sql(rule_id, gen)
+            else:
+                print(f"  retry {rule_id:6} - repairing Spark SQL validation error")
+                repaired_gen = repair_generated_sql_for_spark(rule_id, gen, e)
+
+            validate_spark_sql(repaired_gen.sql)
+            generated_queries[rule_id] = repaired_gen
+            validated_queries[rule_id] = repaired_gen
+            print(f"  OK {rule_id:6} - repaired")
+        except Exception as retry_error:
+            validation_errors[rule_id] = {
+                "original_error": str(e),
+                "repair_error": str(retry_error),
+                "sql": gen.sql,
+            }
+            print(f"  ERR {rule_id:6} - {str(retry_error)[:160]}")
 
 investment_projects.createOrReplaceTempView("investment_projects")
 
 print(f"\nValidated: {len(validated_queries)}/{len(generated_queries)}")
+
+if validation_errors:
+    print("\nRules still failing validation:")
+    for rule_id, info in validation_errors.items():
+        print(f"  {rule_id}: {info['repair_error'][:300]}")
+
 
 
 
